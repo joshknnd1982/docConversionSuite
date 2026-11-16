@@ -322,6 +322,33 @@ Security notes:
         ),
     )
 
+    pg = parser.add_argument_group(
+        "pandoc options (used with --to; every pandoc option is available)")
+    pg.add_argument("--from", dest="from_format", metavar="FORMAT", default="",
+                    help="Input format for non-PDF files (default: from the file extension).")
+    pg.add_argument("--join", action="store_true",
+                    help="Join every input into one document (needs --to). -o sets the file.")
+    pg.add_argument("--toc", action="store_true", help="Add a table of contents.")
+    pg.add_argument("--toc-depth", type=int, metavar="N", default=3,
+                    help="Heading levels in the table of contents (default: 3).")
+    pg.add_argument("--number-sections", action="store_true", help="Number the headings.")
+    pg.add_argument("--template", metavar="FILE", default="", help="Custom pandoc template.")
+    pg.add_argument("--reference-doc", metavar="FILE", default="",
+                    help="Word, ODT or PowerPoint file whose styles are used.")
+    pg.add_argument("--bibliography", metavar="FILE", action="append", default=[],
+                    help="Bibliography file (repeat for several); turns on citeproc.")
+    pg.add_argument("--csl", metavar="FILE", default="", help="Citation style (CSL) file.")
+    pg.add_argument("--citeproc", action="store_true", help="Format citations with citeproc.")
+    pg.add_argument("--metadata", metavar="KEY=VALUE", action="append", default=[],
+                    help="Document information, for example author=Ada (repeatable).")
+    pg.add_argument("--variable", metavar="KEY=VALUE", action="append", default=[],
+                    help="Template variable, for example fontsize=12pt (repeatable).")
+    pg.add_argument("--pandoc-option", metavar="NAME=VALUE", action="append", default=[],
+                    help=("Any option from --list-pandoc-options, by name or pandoc flag,\n"
+                          "for example epub-cover-image=cover.jpg or lof=true (repeatable)."))
+    pg.add_argument("--list-pandoc-options", action="store_true",
+                    help="List every pandoc option this program offers, then exit.")
+
     parser.add_argument(
         "--no-progress",
         action="store_true",
@@ -688,11 +715,82 @@ def _accessible_math(
             sys.stderr.write(f"{colors.ok}Accessible HTML:{colors.reset} {html_path}\n")
 
 
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _pandoc_options(args: argparse.Namespace, to: Optional[str] = None):
+    """PandocOptions from the command line. Raises ValueError on a bad option."""
+    from . import pandoc_options as po
+    from . import pandoc_support as ps
+
+    o = ps.PandocOptions(to_format=to or args.to or "gfm", extra_args=args.pandoc_args,
+                         from_format=args.from_format or "")
+    o.toc = args.toc
+    o.toc_depth = args.toc_depth
+    o.number_sections = args.number_sections
+    o.template = args.template
+    o.reference_doc = args.reference_doc
+    o.bibliography = ";".join(args.bibliography)
+    o.csl = args.csl
+    o.citeproc = args.citeproc
+    if args.metadata:
+        o.values["metadata"] = "\n".join(args.metadata)
+    if args.variable:
+        o.values["variables"] = "\n".join(args.variable)
+    by_flag = {s.name: s for s in po.OPTIONS if s.flag and not s.special}
+    for item in args.pandoc_option:
+        name, sep, value = item.partition("=")
+        name = name.strip().lstrip("-")
+        spec = po.BY_KEY.get(name.replace("-", "_")) or by_flag.get(name)
+        if not sep or spec is None or spec.kind == po.FILTERS:
+            raise ValueError(f"unknown pandoc option '{item}' (see --list-pandoc-options)")
+        if spec.kind == po.SWITCH:
+            low = value.strip().lower()
+            if low not in _TRUE | _FALSE:
+                raise ValueError(f"{name} needs true or false, not '{value}'")
+            val = low in _TRUE
+        elif spec.kind == po.NUMBER:
+            val = int(value)
+        elif spec.kind == po.CHOICE and spec.choices:
+            allowed = [v for v, _ in spec.choices]
+            if value not in allowed:
+                raise ValueError(f"{name} must be one of: {', '.join(v for v in allowed if v)}")
+            val = value
+        elif spec.kind in (po.PAIRS, po.LINES):
+            old = str(po.get_value(o, spec) or "")
+            val = (old + "\n" + value) if old else value
+        else:
+            val = value
+        po.set_value(o, spec, val)
+        if spec.key == "citation_method":
+            o.citeproc = val == "citeproc"
+    return o
+
+
+def _list_pandoc_options() -> int:
+    from . import pandoc_options as po
+
+    titles = dict(po.PAGES)
+    for page, _ in po.PAGES:
+        print(f"{titles[page]}:")
+        for s in po.OPTIONS:
+            if s.page != page:
+                continue
+            name = s.key.replace("_", "-")
+            choices = "|".join(v for v, _ in s.choices if v) if s.choices else s.kind
+            print(f"  {name:28} {choices:24} {s.label}")
+        print()
+    print("Use them with --pandoc-option NAME=VALUE, for example\n"
+          "  pdfmd book.docx --to epub --pandoc-option epub-cover-image=cover.jpg")
+    return 0
+
+
 def _pandoc_export(outp: Path, opts: Options, args: argparse.Namespace, colors: _Colors) -> bool:
     """Convert the Markdown output with pandoc (``--to``). Returns success."""
     from . import pandoc_support as ps
 
-    popts = ps.PandocOptions(to_format=args.to, extra_args=args.pandoc_args)
+    popts = _pandoc_options(args)
     dest = outp.with_suffix(ps.output_extension(args.to))
     if dest == outp:
         dest = outp.with_name(outp.stem + "_pandoc" + outp.suffix)
@@ -875,13 +973,57 @@ def _convert_document(inp: Path, out_arg: Optional[Path], multiple: bool, opts: 
         sys.stderr.write(f"{colors.info}{msg}{colors.reset}\n")
 
     try:
-        ps.convert(inp, dest, ps.PandocOptions(to_format=to, extra_args=args.pandoc_args),
+        ps.convert(inp, dest, _pandoc_options(args, to),
                    ocr_lang=opts.ocr_lang, log_cb=log if verbose else None,
                    vision=_vision_settings(opts))
     except Exception as exc:
         sys.stderr.write(f"{colors.err}Error:{colors.reset} {exc}\n")
         return False
     return True
+
+
+def _join(inputs: List[Path], out_arg: Optional[Path], opts: Options,
+          args: argparse.Namespace, colors: _Colors) -> int:
+    """--join: every input (PDFs through pdfmd first) into one --to document."""
+    import tempfile
+
+    from . import pandoc_support as ps
+
+    if not args.to:
+        sys.stderr.write(f"{colors.err}Error:{colors.reset} --join needs --to FORMAT.\n")
+        return 1
+    missing = [p for p in inputs if not p.is_file()]
+    if missing:
+        sys.stderr.write(f"{colors.err}Error:{colors.reset} input file not found: {missing[0]}\n")
+        return 1
+    ext = ps.output_extension(args.to)
+    dest = out_arg or inputs[0].with_name(inputs[0].stem + "_joined" + ext)
+    if dest.is_dir():
+        dest = dest / (inputs[0].stem + "_joined" + ext)
+    verbose = args.verbose >= 1 and not args.quiet
+
+    def log(msg: str) -> None:
+        sys.stderr.write(f"{colors.info}{msg}{colors.reset}\n")
+
+    with tempfile.TemporaryDirectory(prefix="pdfmd-join-") as tmp:
+        parts: List[Path] = []
+        for i, inp in enumerate(inputs, 1):
+            if inp.suffix.lower() == ".pdf":
+                md = Path(tmp) / f"{i}_{inp.stem}.md"
+                if not _run_single(inp, md, opts, args, colors):
+                    return 1
+                parts.append(md)
+            else:
+                parts.append(inp)
+        try:
+            ps.join_convert(parts, dest, _pandoc_options(args), ocr_lang=opts.ocr_lang,
+                            log_cb=log if verbose else None, vision=_vision_settings(opts))
+        except Exception as exc:
+            sys.stderr.write(f"{colors.err}Pandoc error:{colors.reset} {exc}\n")
+            return 1
+    if not args.quiet:
+        sys.stderr.write(f"{colors.ok}Joined {len(inputs)} files:{colors.reset} {dest}\n")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -927,10 +1069,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _vision_update(args, colors)
     if args.describe_photos:
         return _describe_photos(args, opts, colors)
+    if args.list_pandoc_options:
+        return _list_pandoc_options()
 
     # NOW check if inputs were provided
     if not args.inputs:
         parser.print_help()
+        return 1
+
+    try:
+        _pandoc_options(args)   # report a mistyped option before converting anything
+    except ValueError as exc:
+        sys.stderr.write(f"{colors.err}Error:{colors.reset} {exc}\n")
         return 1
 
     # Prepare inputs
@@ -938,6 +1088,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Interpret output argument
     out_arg = Path(args.output).expanduser() if args.output else None
+
+    if args.join:
+        return _join(inputs, out_arg, opts, args, colors)
+
     multiple = len(inputs) > 1
 
     if multiple and out_arg is not None and out_arg.exists() and not out_arg.is_dir():

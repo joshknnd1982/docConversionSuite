@@ -195,6 +195,27 @@ def test_access_keys_are_unique():
         assert len(keys) == len(set(keys)), page
 
 
+def test_command_line_pandoc_options():
+    from pdfmd import cli
+
+    args = cli._build_parser().parse_args([
+        "in.docx", "--to", "epub", "--toc", "--metadata", "author=Ada",
+        "--metadata", "date=2026", "--bibliography", "a.bib", "--bibliography", "b.bib",
+        "--pandoc-option", "epub-cover-image=cover.jpg", "--pandoc-option", "lof=true",
+        "--pandoc-option", "split_level=2", "--pandoc-option", "citation-method=natbib"])
+    o = cli._pandoc_options(args)
+    assert o.to_format == "epub" and o.toc
+    assert o.values["metadata"] == "author=Ada\ndate=2026"
+    assert o.bibliography == "a.bib;b.bib"
+    assert o.values["epub_cover_image"] == "cover.jpg"
+    assert o.values["lof"] is True and o.values["split_level"] == 2
+    assert o.citation_method() == "natbib"
+    for bad in (["--pandoc-option", "nonsense=1"], ["--pandoc-option", "lof=maybe"],
+                ["--pandoc-option", "wrap=sideways"], ["--pandoc-option", "toc"]):
+        with pytest.raises(ValueError):
+            cli._pandoc_options(cli._build_parser().parse_args(["in.md", "--to", "html"] + bad))
+
+
 @needs_pandoc
 def test_every_pandoc_option_is_offered():
     flags = ps.supported_flags(PANDOC)
