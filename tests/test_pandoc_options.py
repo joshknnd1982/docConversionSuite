@@ -101,6 +101,20 @@ def test_options_the_running_pandoc_lacks_are_left_out():
     assert "--syntax-highlighting=none" in args
 
 
+def test_math_method_flag_follows_the_pandoc_version():
+    opts = ps.PandocOptions(to_format="html")
+    new = ps.build_args("pandoc", Path("a.md"), Path("a.html"), opts, "markdown",
+                        flags={"math-method", "standalone"})
+    assert any(a.startswith("--math-method=mathjax:https://") for a in new)
+    old = ps.build_args("pandoc", Path("a.md"), Path("a.html"), opts, "markdown",
+                        flags={"standalone"})
+    assert any(a.startswith("--mathjax=https://") for a in old)
+    opts.to_format = "epub"
+    new = ps.build_args("pandoc", Path("a.md"), Path("a.epub"), opts, "markdown",
+                        flags={"math-method"})
+    assert "--math-method=mathml" in new
+
+
 def test_switch_that_pandoc_turns_on_by_default_is_turned_off_explicitly():
     spec = po.BY_KEY["epub_title_page"]
     assert po.option_args(spec, False) == ["--epub-title-page=false"]

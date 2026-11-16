@@ -1,729 +1,700 @@
-"""Accessible pandoc converter dialog for pdfmd.
+"""Pandoc Options window (Ctrl+P): every pandoc setting, and nothing else.
 
-Opened from File > Convert with Pandoc (Ctrl+P). Converts PDFs (through
-pdfmd) or any format pandoc reads into any format pandoc writes, with
-pandoc's options for standalone documents, tables of contents, numbering,
-math rendering, citations, templates, reference documents, filters, PDF
-engines and free-form extra arguments.
+Files are chosen and converted in the main window; this window only holds
+the settings used when a file is converted to a format other than pdfmd's
+Markdown. Its controls are built from ``pandoc_options.OPTIONS``, so every
+pandoc option has a labelled control with help text and an Alt+letter key.
 
-Layout: four pages in a tab control (Ctrl+Tab / Ctrl+Shift+Tab switch
-pages), in the order you use them: choose the format, then the document
-options, then citations and templates, and last the files and folders to
-convert. One file, many files, whole folders (with or without subfolders)
-or any mix are converted in one batch with the same settings. Convert,
-Stop, Install Pandoc and Close buttons are always at the bottom. Every
-control has a label, a description and an Alt+letter key.
+Layout: pages in a tab control (Ctrl+Tab / Ctrl+Shift+Tab move between
+them). Only the options that matter for the chosen output format are shown,
+and pages with nothing to show are left out. Rarely used options appear when
+"Show advanced options" is checked. The bottom row (always visible) has Show
+advanced options (Alt+V), Reset to Defaults (Alt+F), Install Pandoc (Alt+P,
+only when pandoc is missing), OK and Cancel. F1 lists every access key.
 """
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import subprocess
-import tempfile
-import threading
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import wx
 
+from . import pandoc_options as po
 from . import pandoc_support as ps
-from .gui_a11y import Announcer, MnemonicHandler, describe
+from .gui_a11y import Announcer, MnemonicHandler, describe, mnemonic_of
 
 PDF_ENGINES = ["", "pdflatex", "xelatex", "lualatex", "tectonic", "latexmk", "typst",
                "context", "wkhtmltopdf", "weasyprint", "pagedjs-cli", "prince", "groff",
                "pdfroff"]
 
-FILES_PAGE = 3  # index of the "Files and folders" page
+RESERVED_KEYS = "VFP"   # Show advanced options, Reset to Defaults, Install Pandoc
+LABEL_WIDTH = 260
+
+# Controls that are not pandoc options themselves, placed around the table's
+# options: (page, after this option key or "" for the top or "*" for the end).
+EXTRAS: List[Tuple[str, str, str]] = [
+    ("format", "", "out_format"),
+    ("format", "", "in_format"),
+    ("format", "template", "save_template"),
+    ("format", "*", "out_ext"),
+    ("format", "*", "in_ext"),
+    ("math", "highlight_style", "save_highlight"),
+    ("office", "reference_doc", "save_reference"),
+    ("command", "*", "preview"),
+]
+EXTRA_LABELS = {
+    "out_format": "Output format",
+    "in_format": "Input format",
+    "save_template": "Save Default Template...",
+    "out_ext": "Output format extensions",
+    "in_ext": "Input format extensions",
+    "save_highlight": "Save Highlight Style...",
+    "save_reference": "Save Default Reference Document...",
+    "preview": "Command that will run",
+}
+EXTRA_HELP = {
+    "out_format": "The format to create. Changing it shows the options for that format. "
+                  "The main window's Convert to choice is set to the same format.",
+    "in_format": "The format of the input files. Detect works for most files and is needed "
+                 "when a batch mixes several input types. Choose a format to change its "
+                 "extensions.",
+    "save_template": "Save pandoc's built-in template for the output format to a file, so "
+                     "you can edit it and choose it as the template.",
+    "out_ext": "Optional features of the output format. Press Space to turn one on or off. "
+               "Each item says whether pandoc turns it on by default.",
+    "in_ext": "Optional features of the input format. Press Space to turn one on or off. "
+              "Each item says whether pandoc turns it on by default.",
+    "save_highlight": "Save the chosen highlighting style as a theme file you can edit, "
+                      "then use it by typing its file name in Code highlighting.",
+    "save_reference": "Save pandoc's own reference document for Word, OpenDocument or "
+                      "PowerPoint. Change its styles in Word or LibreOffice, then use it as "
+                      "the reference document.",
+    "preview": "The pandoc command for an example file with these settings. Read it with the "
+               "arrow keys; it changes as you change options.",
+}
 
 
-class _ListDropTarget(wx.FileDropTarget):
-    """Files and folders dropped on the list are added to it."""
-
-    def __init__(self, dlg: "PandocDialog") -> None:
-        super().__init__()
-        self.dlg = dlg
-
-    def OnDropFiles(self, x, y, filenames):  # noqa: N802
-        self.dlg.add_items(list(filenames), announce=True)
-        return True
+def _choices_for(spec: po.OptionSpec, highlight_styles: List[str],
+                 flags: Optional[frozenset]) -> List[Tuple[str, str]]:
+    if spec.key == "math":
+        return list(ps.MATH_METHODS)
+    return list(spec.choices)
 
 
-class PandocDialog(wx.Dialog):
+class _Row:
+    """The controls of one option (label, control, button) and how to read them."""
+
+    def __init__(self, spec: Optional[po.OptionSpec], key: str) -> None:
+        self.spec = spec
+        self.key = key
+        self.windows: List[wx.Window] = []
+        self.get: Callable[[], Any] = lambda: None
+        self.set: Callable[[Any], None] = lambda v: None
+
+
+class PandocOptionsDialog(wx.Dialog):
     def __init__(
         self,
         parent: wx.Window,
         opts: ps.PandocOptions,
-        auto_export: bool,
-        initial_files: List[str],
-        ocr_lang: str,
-        pdf_converter: Callable[[Path, Path], None],
         announcer: Optional[Announcer] = None,
-        out_dir: str = "",
-        vision_settings=None,
-        include_subfolders: bool = False,
-        folder_types: str = "",
+        show_advanced: bool = False,
+        sample_input: str = "",
     ) -> None:
-        super().__init__(parent, title="Convert Any Document with Pandoc", size=(820, 720),
+        super().__init__(parent, title="Pandoc Options", size=(860, 720),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        self.opts = opts
-        self.auto_export = auto_export
-        self.ocr_lang = ocr_lang
-        self.pdf_converter = pdf_converter
+        self.opts = copy.deepcopy(opts)
         self.announcer = announcer or Announcer()
-        self.items: List[str] = []  # files and folders, in the order added
-        self.out_dir_value = out_dir
-        self.include_subfolders = include_subfolders
-        self.folder_types = folder_types
-        self.vision_settings = vision_settings
-        self.describe_images = bool(vision_settings.enabled) if vision_settings is not None else False
-        self._worker: Optional[threading.Thread] = None
-        self._stop = threading.Event()
+        self.show_advanced = show_advanced
+        self.sample_input = sample_input
         self.pandoc = ps.find_pandoc()
+        self._load_pandoc_info()
+        self.rows: Dict[str, _Row] = {}
+        self.pages: List[Tuple[str, str, wx.ScrolledWindow]] = []
+        self._preview_timer: Optional[wx.CallLater] = None
+        self._ext_format: Dict[str, str] = {"out_ext": "", "in_ext": ""}
+        self._ext_defaults: Dict[str, Dict[str, bool]] = {"out_ext": {}, "in_ext": {}}
+
+        self._build()
+        self._load(self.opts)
+        MnemonicHandler(self)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+        self.SetEscapeId(wx.ID_CANCEL)
+        self.SetAffirmativeId(wx.ID_OK)
+        self.CentreOnParent()
+        wx.CallAfter(self.rows["out_format"].windows[1].SetFocus)
+
+    def _load_pandoc_info(self) -> None:
+        self.flags = ps.supported_flags(self.pandoc) if self.pandoc else None
         self.in_formats = ps.list_input_formats(self.pandoc)
         self.out_formats = ps.list_output_formats(self.pandoc)
         self.highlight_styles = ps.list_highlight_styles(self.pandoc)
 
-        self._build()
-        self._load(opts)
-        self.add_items(initial_files)
-        self.describe_cb.SetValue(self.describe_images)
-        if vision_settings is None:
-            self.describe_cb.Hide()
-        MnemonicHandler(self)
-        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
-        self.SetEscapeId(wx.ID_CLOSE)
-        self.CentreOnParent()
-        # Settings first: start on the output format; the files come last.
-        wx.CallAfter(self.out_choice.SetFocus)
-
     # ---------------------------------------------------------------- layout
+    def _page_items(self, page: str) -> List[Tuple[str, Optional[po.OptionSpec]]]:
+        """(key, spec) for every control on a page, in Tab order."""
+        items: List[Tuple[str, Optional[po.OptionSpec]]] = []
+        items += [(k, None) for p, after, k in EXTRAS if p == page and after == ""]
+        for spec in po.OPTIONS:
+            if spec.page != page:
+                continue
+            items.append((spec.key, spec))
+            items += [(k, None) for p, after, k in EXTRAS if p == page and after == spec.key]
+        items += [(k, None) for p, after, k in EXTRAS if p == page and after == "*"]
+        return items
+
+    def _page_labels(self, page: str) -> List[str]:
+        labels: List[str] = []
+        for key, spec in self._page_items(page):
+            if spec is None:
+                labels.append(EXTRA_LABELS[key])
+            elif spec.kind == po.CHOICE and spec.radio:
+                labels.append(spec.label)
+                labels += [lab for _, lab in spec.choices]
+            elif spec.kind == po.FILTERS:
+                labels += [spec.label, "Add Lua Filter...", "Add Filter Program...",
+                           "Remove Filter", "Move Up", "Move Down"]
+            else:
+                labels.append(spec.label)
+                if spec.button:
+                    labels.append(spec.button)
+        return labels
+
     def _build(self) -> None:
         outer = wx.BoxSizer(wx.VERTICAL)
-        pad = 6
-
         self.status = wx.StaticText(self, label="")
         outer.Add(self.status, 0, wx.ALL, 8)
 
         self.book = wx.Notebook(self)
         describe(self.book,
-                 "Pages of pandoc settings, in order: format, document options, citations, then the "
-                 "files and folders to convert. Press Ctrl+Tab to move to the next page.")
-
-        # ---------------- Page 1: format and output ----------------
-        p1 = wx.Panel(self.book)
-        s1 = wx.BoxSizer(wx.VERTICAL)
-
-        grid = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
-        grid.AddGrowableCol(1, 1)
-        grid.Add(wx.StaticText(p1, label="Input &format:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.in_choice = wx.Choice(
-            p1, choices=["Detect from file extension"] + [ps.format_label(f) for f in self.in_formats])
-        describe(self.in_choice,
-                 "The format of the input files. Detect works for most files, and is needed when "
-                 "a batch mixes several input types.")
-        grid.Add(self.in_choice, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(p1, label="&Output format:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.out_choice = wx.Choice(p1, choices=[ps.format_label(f) for f in self.out_formats])
-        describe(self.out_choice,
-                 "The format to create, for example Microsoft Word, EPUB e-book, HTML, LaTeX, "
-                 "OpenDocument, PowerPoint, reStructuredText or plain text.")
-        grid.Add(self.out_choice, 1, wx.EXPAND)
-        grid.Add(wx.StaticText(p1, label="Output fol&der:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        orow = wx.BoxSizer(wx.HORIZONTAL)
-        self.out_dir = wx.TextCtrl(p1)
-        describe(self.out_dir,
-                 "Folder for the converted files. Leave empty to save next to each input. Files "
-                 "from an added folder keep their subfolder layout inside this folder.")
-        self.browse_btn = wx.Button(p1, label="&Browse...")
-        describe(self.browse_btn, "Choose the output folder.")
-        orow.Add(self.out_dir, 1, wx.RIGHT, pad)
-        orow.Add(self.browse_btn, 0)
-        grid.Add(orow, 1, wx.EXPAND)
-        s1.Add(grid, 0, wx.EXPAND | wx.ALL, pad)
-
-        self.auto_cb = wx.CheckBox(p1, label="Also e&xport every PDF conversion in the main window to this format")
-        describe(self.auto_cb,
-                 "When checked, each PDF you convert in the main window is also converted to the "
-                 "output format chosen here, with these settings.")
-        s1.Add(self.auto_cb, 0, wx.ALL, pad)
-
-        self.describe_cb = wx.CheckBox(p1, label="Describe pi&ctures with the local AI vision model")
-        describe(self.describe_cb,
-                 "Pictures without alternative text are described by the vision model on this "
-                 "computer. Word, EPUB, HTML, PowerPoint and other formats that can hold pictures "
-                 "get the description as alternative text; plain text and other text-only "
-                 "formats get it as a block quote. Alternative text the author wrote is kept.")
-        s1.Add(self.describe_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
-        p1.SetSizer(s1)
-        self.book.AddPage(p1, "Format and output")
-
-        # ---------------- Page 2: document options ----------------
-        p2 = wx.Panel(self.book)
-        s2 = wx.BoxSizer(wx.VERTICAL)
-        self.standalone_cb = wx.CheckBox(p2, label="&Standalone document (complete file with header)")
-        describe(self.standalone_cb, "Write a complete document rather than a fragment. Pandoc option --standalone.")
-        self.toc_cb = wx.CheckBox(p2, label="Table of &contents")
-        describe(self.toc_cb, "Add a table of contents. Pandoc option --toc.")
-        self.number_cb = wx.CheckBox(p2, label="&Number sections")
-        describe(self.number_cb, "Number the headings. Pandoc option --number-sections.")
-        self.embed_cb = wx.CheckBox(p2, label="&Embed images and styles in a single HTML file")
-        describe(self.embed_cb, "Make HTML output self-contained. Pandoc option --embed-resources.")
-        for cb in (self.standalone_cb, self.toc_cb, self.number_cb, self.embed_cb):
-            s2.Add(cb, 0, wx.ALL, pad)
-
-        g2 = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
-        g2.AddGrowableCol(1, 1)
-        g2.Add(wx.StaticText(p2, label="&Depth of contents (heading levels):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.depth_spin = wx.SpinCtrl(p2, min=1, max=6, initial=3)
-        describe(self.depth_spin, "How many heading levels the table of contents includes.")
-        g2.Add(self.depth_spin, 0)
-        g2.Add(wx.StaticText(p2, label="&Math rendering:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.math_choice = wx.Choice(p2, choices=[label for _, label in ps.MATH_METHODS])
-        describe(self.math_choice,
-                 "How equations are written. Automatic picks the most accessible method: MathJax "
-                 "for web pages, MathML for EPUB, and native equations for Word, OpenDocument "
-                 "and PowerPoint.")
-        g2.Add(self.math_choice, 1, wx.EXPAND)
-        g2.Add(wx.StaticText(p2, label="Code &highlighting style:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.hl_choice = wx.Choice(p2, choices=["Default"] + self.highlight_styles)
-        describe(self.hl_choice, "Syntax highlighting style for code blocks.")
-        g2.Add(self.hl_choice, 1, wx.EXPAND)
-        g2.Add(wx.StaticText(p2, label="Line &wrapping:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.wrap_choice = wx.Choice(p2, choices=["Automatic", "None", "Preserve"])
-        describe(self.wrap_choice, "How text output wraps lines. Pandoc option --wrap.")
-        g2.Add(self.wrap_choice, 1, wx.EXPAND)
-        g2.Add(wx.StaticText(p2, label="Document &title:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.title_text = wx.TextCtrl(p2)
-        describe(self.title_text, "Optional title. Leave empty to use the file name as the page title.")
-        g2.Add(self.title_text, 1, wx.EXPAND)
-        g2.Add(wx.StaticText(p2, label="Document &language:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.lang_text = wx.TextCtrl(p2)
-        describe(self.lang_text,
-                 "Language tag such as en, fr or de-CH. Screen readers use it to pick the right "
-                 "voice. Leave empty to use the OCR language.")
-        g2.Add(self.lang_text, 1, wx.EXPAND)
-        g2.Add(wx.StaticText(p2, label="Shift headin&g levels by:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.shift_spin = wx.SpinCtrl(p2, min=-5, max=5, initial=0)
-        describe(self.shift_spin, "Promote or demote all headings. Pandoc option --shift-heading-level-by.")
-        g2.Add(self.shift_spin, 0)
-        s2.Add(g2, 0, wx.EXPAND | wx.ALL, pad)
-        p2.SetSizer(s2)
-        self.book.AddPage(p2, "Document options")
-
-        # ---------------- Page 3: citations, templates, filters ----------------
-        p3 = wx.Panel(self.book)
-        s3 = wx.BoxSizer(wx.VERTICAL)
-        self.cite_cb = wx.CheckBox(p3, label="Process &citations (citeproc)")
-        describe(self.cite_cb, "Format citations and add a bibliography. Pandoc option --citeproc.")
-        s3.Add(self.cite_cb, 0, wx.ALL, pad)
-        g3 = wx.FlexGridSizer(cols=3, vgap=pad, hgap=pad)
-        g3.AddGrowableCol(1, 1)
-
-        def file_row(label: str, help_text: str, btn_label: str, wildcard: str, multi: bool = False):
-            g3.Add(wx.StaticText(p3, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            txt = wx.TextCtrl(p3)
-            describe(txt, help_text)
-            btn = wx.Button(p3, label=btn_label)
-            describe(btn, "Choose the file with a file dialog.")
-            g3.Add(txt, 1, wx.EXPAND)
-            g3.Add(btn, 0)
-            btn.Bind(wx.EVT_BUTTON, lambda e: self._pick_file(txt, wildcard, multi))
-            return txt
-
-        self.bib_text = file_row("&Bibliography files:",
-                                 "BibTeX, BibLaTeX, CSL JSON or RIS files. Separate several with semicolons.",
-                                 "Choose B&ibliography...",
-                                 "Bibliographies|*.bib;*.json;*.yaml;*.ris|All files|*.*", True)
-        self.csl_text = file_row("Citation &style (CSL):",
-                                 "A CSL style file that controls citation formatting.",
-                                 "Choose Style &File...", "CSL styles (*.csl)|*.csl|All files|*.*")
-        self.ref_text = file_row("&Reference document:",
-                                 "A Word, OpenDocument or PowerPoint file whose styles are used for the output.",
-                                 "Choose Doc&ument...",
-                                 "Office documents|*.docx;*.odt;*.pptx|All files|*.*")
-        self.tpl_text = file_row("&Template:", "A custom pandoc template.",
-                                 "Choose Te&mplate...", "All files|*.*")
-        self.filter_text = file_row("&Lua filters or filter programs:",
-                                    "Pandoc filters to run, separated by semicolons. Files ending in .lua "
-                                    "run as Lua filters.",
-                                    "Choose Filt&er...", "Lua filters (*.lua)|*.lua|All files|*.*", True)
-        s3.Add(g3, 0, wx.EXPAND | wx.ALL, pad)
-
-        g4 = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
-        g4.AddGrowableCol(1, 1)
-        g4.Add(wx.StaticText(p3, label="PDF engi&ne (for PDF output):"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.engine_combo = wx.ComboBox(p3, choices=["Default"] + PDF_ENGINES[1:], style=wx.CB_DROPDOWN)
-        describe(self.engine_combo,
-                 "Program pandoc uses to make PDF files, for example xelatex, typst or weasyprint. "
-                 "It must be installed separately.")
-        g4.Add(self.engine_combo, 1, wx.EXPAND)
-        g4.Add(wx.StaticText(p3, label="E&xtra pandoc arguments:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.extra_text = wx.TextCtrl(p3)
-        describe(self.extra_text,
-                 "Any other pandoc command-line options, exactly as you would type them, for "
-                 "example --columns=100 --metadata author=\"Ada Lovelace\". This gives access to "
-                 "every pandoc feature.")
-        g4.Add(self.extra_text, 1, wx.EXPAND)
-        s3.Add(g4, 0, wx.EXPAND | wx.ALL, pad)
-        p3.SetSizer(s3)
-        self.book.AddPage(p3, "Citations, templates and filters")
-
-        # ---------------- Page 4: files and folders to convert ----------------
-        p4 = wx.Panel(self.book)
-        s4 = wx.BoxSizer(wx.VERTICAL)
-        s4.Add(wx.StaticText(p4, label="&Input files and folders:"), 0, wx.LEFT | wx.TOP, pad)
-        self.file_list = wx.ListBox(p4, style=wx.LB_EXTENDED, size=(-1, 140))
-        describe(self.file_list,
-                 "Files and folders to convert, all with the settings on the other pages. Add one "
-                 "file, many files, whole folders, or a mix. PDFs are converted with the pdfmd "
-                 "engine first; any format pandoc reads can be added. Shift and the arrow keys "
-                 "select a range; Shift+F8, then the arrows and Space, select separate items. "
-                 "Press Delete to remove the selected items.")
-        self.file_list.SetDropTarget(_ListDropTarget(self))
-        s4.Add(self.file_list, 1, wx.EXPAND | wx.ALL, pad)
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        self.add_btn = wx.Button(p4, label="&Add Files...")
-        describe(self.add_btn, "Choose one or more files to convert. Hold Control or Shift to "
-                               "select several files in the file dialog.")
-        self.add_dir_btn = wx.Button(p4, label="Add &Folder...")
-        describe(self.add_dir_btn,
-                 "Choose a folder. Every file in it that can be converted is converted; you can "
-                 "add several folders one after another.")
-        self.remove_btn = wx.Button(p4, label="&Remove Selected")
-        describe(self.remove_btn, "Remove the selected files and folders from the list.")
-        self.clear_btn = wx.Button(p4, label="Cl&ear List")
-        describe(self.clear_btn, "Remove every file and folder from the list.")
-        for b in (self.add_btn, self.add_dir_btn, self.remove_btn):
-            row.Add(b, 0, wx.RIGHT, pad)
-        row.Add(self.clear_btn, 0)
-        s4.Add(row, 0, wx.LEFT | wx.BOTTOM, pad)
-
-        self.subdirs_cb = wx.CheckBox(p4, label="Include &subfolders of added folders")
-        describe(self.subdirs_cb,
-                 "When checked, files in the subfolders of each added folder are converted too. "
-                 "With an output folder, the subfolder layout is kept.")
-        s4.Add(self.subdirs_cb, 0, wx.ALL, pad)
-        g5 = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
-        g5.AddGrowableCol(1, 1)
-        g5.Add(wx.StaticText(p4, label="File &types to take from folders:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.types_text = wx.TextCtrl(p4)
-        describe(self.types_text,
-                 "Extensions to convert from added folders, separated by semicolons, for example "
-                 "docx; md; pdf. Leave empty to take every file pandoc or pdfmd can read. Files "
-                 "already in the output format are always skipped. Files added one by one are "
-                 "always converted.")
-        g5.Add(self.types_text, 1, wx.EXPAND)
-        s4.Add(g5, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, pad)
-
-        s4.Add(wx.StaticText(p4, label="Pandoc lo&g:"), 0, wx.LEFT | wx.TOP, pad)
-        self.log = wx.TextCtrl(p4, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 110))
-        describe(self.log, "Messages from pandoc. Read it with the arrow keys.")
-        s4.Add(self.log, 1, wx.EXPAND | wx.ALL, pad)
-        p4.SetSizer(s4)
-        self.book.AddPage(p4, "Files and folders")
-
+                 "Pages of pandoc settings. Press Ctrl+Tab for the next page and Ctrl+Shift+Tab "
+                 "for the previous one. Only options for the chosen output format are shown. "
+                 "Press F1 for every access key.")
+        for page, title in po.PAGES:
+            panel = wx.ScrolledWindow(self.book, style=wx.TAB_TRAVERSAL | wx.VSCROLL)
+            panel.SetScrollRate(0, 12)
+            sizer = wx.BoxSizer(wx.VERTICAL)
+            keyed = iter(po.assign_access_keys(self._page_labels(page), RESERVED_KEYS))
+            for key, spec in self._page_items(page):
+                row = _Row(spec, key)
+                if spec is None:
+                    self._build_extra(panel, sizer, row, keyed)
+                else:
+                    self._build_option(panel, sizer, row, keyed)
+                self.rows[key] = row
+            panel.SetSizer(sizer)
+            self.pages.append((page, title, panel))
+            self.book.AddPage(panel, title)
         outer.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
 
-        btns = wx.BoxSizer(wx.HORIZONTAL)
-        self.convert_btn = wx.Button(self, label="Con&vert")
-        describe(self.convert_btn,
-                 "Convert every file and folder in the list with these settings. If the list is "
-                 "empty, moves to the Files and folders page. Shortcut: F5.")
-        self.stop_btn = wx.Button(self, label="Sto&p")
-        describe(self.stop_btn, "Stop the batch after the file being converted now.")
+        bottom = wx.BoxSizer(wx.HORIZONTAL)
+        self.advanced_cb = wx.CheckBox(self, label="Show ad&vanced options")
+        describe(self.advanced_cb,
+                 "Also show options most people never need, such as include files, data "
+                 "folders, web request headers and debugging messages.")
+        self.reset_btn = wx.Button(self, label="Reset to De&faults")
+        describe(self.reset_btn, "Set every pandoc option back to its default value.")
         self.install_btn = wx.Button(self, label="Install &Pandoc...")
         describe(self.install_btn, "Install pandoc with the Windows Package Manager (winget).")
-        self.close_btn = wx.Button(self, wx.ID_CLOSE, "Close")
-        describe(self.close_btn, "Close this window and keep the settings. Shortcut: Escape.")
-        btns.Add(self.convert_btn, 0, wx.RIGHT, pad)
-        btns.Add(self.stop_btn, 0, wx.RIGHT, pad)
-        btns.Add(self.install_btn, 0, wx.RIGHT, pad)
-        btns.Add(self.close_btn, 0)
-        outer.Add(btns, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
+        ok = wx.Button(self, wx.ID_OK, "OK")
+        describe(ok, "Keep these settings and close the window. Shortcut: Enter.")
+        cancel = wx.Button(self, wx.ID_CANCEL, "Cancel")
+        describe(cancel, "Close the window without changing the settings. Shortcut: Escape.")
+        bottom.Add(self.advanced_cb, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 16)
+        bottom.Add(self.reset_btn, 0, wx.RIGHT, 6)
+        bottom.Add(self.install_btn, 0, wx.RIGHT, 6)
+        bottom.AddStretchSpacer()
+        bottom.Add(ok, 0, wx.RIGHT, 6)
+        bottom.Add(cancel, 0)
+        outer.Add(bottom, 0, wx.EXPAND | wx.ALL, 8)
         self.SetSizer(outer)
-        self.convert_btn.SetDefault()
+        ok.SetDefault()
 
-        self.add_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_files())
-        self.add_dir_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_folder())
-        self.remove_btn.Bind(wx.EVT_BUTTON, lambda e: self._remove_selected())
-        self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self._clear_items())
-        self.subdirs_cb.Bind(wx.EVT_CHECKBOX, lambda e: self._refresh_list())
-        self.types_text.Bind(wx.EVT_KILL_FOCUS, self._on_types_done)
-        self.browse_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_dir())
-        self.convert_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_convert())
-        self.stop_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_stop())
+        self.advanced_cb.Bind(wx.EVT_CHECKBOX, lambda e: self._refresh(keep_focus=True))
+        self.reset_btn.Bind(wx.EVT_BUTTON, lambda e: self._reset())
         self.install_btn.Bind(wx.EVT_BUTTON, lambda e: self._install_pandoc())
-        self.close_btn.Bind(wx.EVT_BUTTON, lambda e: self._close())
-        self.Bind(wx.EVT_CLOSE, lambda e: self._close())
-        self.file_list.Bind(wx.EVT_KEY_DOWN, self._on_list_key)
-        self._update_state()
+        ok.Bind(wx.EVT_BUTTON, self._on_ok)
+        for evt in (wx.EVT_TEXT, wx.EVT_CHECKBOX, wx.EVT_CHOICE, wx.EVT_COMBOBOX,
+                    wx.EVT_SPINCTRL, wx.EVT_RADIOBUTTON, wx.EVT_LIST_ITEM_CHECKED,
+                    wx.EVT_LIST_ITEM_UNCHECKED):
+            self.Bind(evt, self._on_any_change)
 
-    # ------------------------------------------------------------------ state
-    def _update_state(self) -> None:
-        busy = self._worker is not None and self._worker.is_alive()
-        if busy:
-            pass  # the status line shows the batch's progress
-        elif self.pandoc:
-            if getattr(self, "_ver_for", None) != self.pandoc:
-                self._ver_for, self._ver = self.pandoc, ps.pandoc_version(self.pandoc) or ""
-            where = " (built in)" if ps.is_bundled(self.pandoc) else ""
-            self.status.SetLabel(f"Pandoc {self._ver}{where} is ready.".replace("  ", " "))
-        else:
-            self.status.SetLabel("Pandoc is not installed. Press Install Pandoc to install it, "
-                                 "then convert.")
-        focus = wx.Window.FindFocus()
-        # Convert stays enabled with an empty list (it then opens the Files
-        # and folders page), so it is always reachable with Tab.
-        can_convert = bool(self.pandoc) and not busy
-        # Stop and Install Pandoc share Alt+P; only one is ever shown.
-        self.stop_btn.Show(busy)
-        self.install_btn.Show(not self.pandoc and not busy)
-        has_items = bool(self.items) and not busy
-        lose = [self.convert_btn, self.remove_btn, self.clear_btn, self.add_btn,
-                self.add_dir_btn, self.subdirs_cb, self.types_text]
-        for w in (self.remove_btn, self.clear_btn):
-            w.Enable(has_items)
-        for w in (self.add_btn, self.add_dir_btn, self.subdirs_cb, self.types_text):
-            w.Enable(not busy)
-        self.convert_btn.Enable(can_convert)
-        self.Layout()
-        # Never leave focus on a control that was just disabled or hidden.
-        if busy and focus in lose and not focus.IsEnabled():
-            self.stop_btn.SetFocus()
-        elif not busy and focus is self.stop_btn:
-            (self.convert_btn if can_convert else self.file_list).SetFocus()
-        elif focus in (self.remove_btn, self.clear_btn) and not has_items:
-            self.add_btn.SetFocus()
-        elif focus is self.convert_btn and not can_convert:
-            self.file_list.SetFocus()
+    @staticmethod
+    def _label(panel, label: str) -> wx.StaticText:
+        # Created immediately before its control, so it names the control
+        # for screen readers and its Alt key moves to it.
+        return wx.StaticText(panel, label=label, size=(LABEL_WIDTH, -1))
+
+    @staticmethod
+    def _line(sizer, lab: wx.StaticText, ctrl: wx.Window,
+              button: Optional[wx.Button] = None, tall: bool = False) -> None:
+        line = wx.BoxSizer(wx.HORIZONTAL)
+        line.Add(lab, 0, wx.TOP if tall else wx.ALIGN_CENTER_VERTICAL, 3 if tall else 0)
+        line.Add(ctrl, 1, wx.EXPAND | wx.RIGHT, 6)
+        if button is not None:
+            line.Add(button, 0, 0 if tall else wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(line, 0, wx.EXPAND | wx.ALL, 5)
+
+    def _build_option(self, panel, sizer, row: _Row, keyed) -> None:
+        spec = row.spec
+        assert spec is not None
+        kind = spec.kind
+        if kind == po.SWITCH:
+            cb = wx.CheckBox(panel, label=next(keyed))
+            describe(cb, spec.help)
+            sizer.Add(cb, 0, wx.ALL, 5)
+            row.windows = [cb]
+            row.get = cb.GetValue
+            row.set = lambda v, c=cb: c.SetValue(bool(v))
+            return
+        if kind == po.CHOICE and spec.radio:
+            lab = wx.StaticText(panel, label=next(keyed))
+            sizer.Add(lab, 0, wx.LEFT | wx.TOP, 5)
+            radios = []
+            for i, (_, _text) in enumerate(spec.choices):
+                rb = wx.RadioButton(panel, label=next(keyed), style=wx.RB_GROUP if i == 0 else 0)
+                describe(rb, spec.help)
+                sizer.Add(rb, 0, wx.LEFT | wx.TOP, 4 if i else 2)
+                radios.append(rb)
+            row.windows = [lab] + radios
+            values = [v for v, _ in spec.choices]
+
+            def get_radio(rs=radios, vs=values):
+                return next((v for r, v in zip(rs, vs) if r.GetValue()), vs[0])
+
+            def set_radio(v, rs=radios, vs=values):
+                rs[vs.index(v) if v in vs else 0].SetValue(True)
+
+            row.get, row.set = get_radio, set_radio
+            return
+        if kind == po.FILTERS:
+            self._build_filters(panel, sizer, row, keyed)
+            return
+
+        lab = self._label(panel, next(keyed))
+        button = None
+        if kind == po.NUMBER:
+            ctrl = wx.SpinCtrl(panel, min=spec.minimum, max=spec.maximum,
+                               initial=int(spec.default or 0))
+            row.get = ctrl.GetValue
+            row.set = lambda v, c=ctrl, d=spec.default: c.SetValue(int(v if v is not None else d))
+        elif kind == po.CHOICE:
+            pairs = _choices_for(spec, self.highlight_styles, self.flags)
+            ctrl = wx.Choice(panel, choices=[t for _, t in pairs])
+            values = [v for v, _ in pairs]
+            row.get = lambda c=ctrl, vs=values: vs[max(0, c.GetSelection())]
+            row.set = lambda v, c=ctrl, vs=values: c.SetSelection(vs.index(v) if v in vs else 0)
+        elif kind == po.COMBO:
+            if spec.key == "highlight_style":
+                items = ["default", "none"]
+                if self.flags is None or "syntax-highlighting" in self.flags:
+                    items.append("idiomatic")
+                items += self.highlight_styles
+                blank = "default"
+            else:
+                items = ["Default"] + PDF_ENGINES[1:]
+                blank = "Default"
+            ctrl = wx.ComboBox(panel, choices=items, style=wx.CB_DROPDOWN)
+
+            def get_combo(c=ctrl, b=blank):
+                v = c.GetValue().strip()
+                return "" if v.lower() == b.lower() else v
+
+            row.get = get_combo
+            row.set = lambda v, c=ctrl, b=blank: c.SetValue(v or b)
+        elif kind in (po.PAIRS, po.LINES):
+            ctrl = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 64))
+            row.get = ctrl.GetValue
+            row.set = lambda v, c=ctrl: c.ChangeValue(str(v or ""))
+        else:   # TEXT, FILE, SAVEFILE, FILES, FOLDER
+            ctrl = wx.TextCtrl(panel)
+            row.get = lambda c=ctrl: c.GetValue().strip()
+            row.set = lambda v, c=ctrl: c.ChangeValue(str(v or ""))
+            if spec.button:
+                button = wx.Button(panel, label=next(keyed))
+                describe(button, "Choose with a file dialog.")
+                button.Bind(wx.EVT_BUTTON, lambda e, s=spec, c=ctrl: self._choose(s, c))
+        describe(ctrl, spec.help)
+        self._line(sizer, lab, ctrl, button, tall=kind in (po.PAIRS, po.LINES))
+        row.windows = [lab, ctrl] + ([button] if button else [])
+
+    def _build_filters(self, panel, sizer, row: _Row, keyed) -> None:
+        spec = row.spec
+        lab = wx.StaticText(panel, label=next(keyed))
+        lst = wx.ListBox(panel, style=wx.LB_SINGLE, size=(-1, 140))
+        describe(lst, spec.help + " Select a filter, then use the buttons to remove or move it.")
+        sizer.Add(lab, 0, wx.LEFT | wx.TOP, 5)
+        sizer.Add(lst, 0, wx.EXPAND | wx.ALL, 5)
+        line = wx.BoxSizer(wx.HORIZONTAL)
+        buttons = []
+        helps = ["Add a Lua filter file (.lua).",
+                 "Add a filter program, for example pandoc-crossref.exe.",
+                 "Remove the selected filter from the list.",
+                 "Run the selected filter earlier.",
+                 "Run the selected filter later."]
+        for help_text in helps:
+            b = wx.Button(panel, label=next(keyed))
+            describe(b, help_text)
+            line.Add(b, 0, wx.RIGHT, 6)
+            buttons.append(b)
+        sizer.Add(line, 0, wx.ALL, 5)
+        add_lua, add_prog, remove, up, down = buttons
+
+        def items() -> List[str]:
+            return [lst.GetString(i) for i in range(lst.GetCount())]
+
+        def changed(select: int) -> None:
+            if 0 <= select < lst.GetCount():
+                lst.SetSelection(select)
+            self._on_any_change(None)
+
+        def add(lua: bool) -> None:
+            wildcard = ("Lua filters (*.lua)|*.lua|All files (*.*)|*.*" if lua
+                        else "Programs (*.exe;*.py;*.cmd;*.bat)|*.exe;*.py;*.cmd;*.bat|"
+                             "All files (*.*)|*.*")
+            with wx.FileDialog(self, "Choose a filter", wildcard=wildcard,
+                               style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                for p in dlg.GetPaths():
+                    lst.Append(p)
+            changed(lst.GetCount() - 1)
+            lst.SetFocus()
+
+        def move(delta: int) -> None:
+            i = lst.GetSelection()
+            j = i + delta
+            if i == wx.NOT_FOUND or not 0 <= j < lst.GetCount():
+                return
+            vals = items()
+            vals[i], vals[j] = vals[j], vals[i]
+            lst.Set(vals)
+            changed(j)
+            self._say(f"Moved to position {j + 1} of {len(vals)}.")
+
+        def remove_sel() -> None:
+            i = lst.GetSelection()
+            if i == wx.NOT_FOUND:
+                return
+            lst.Delete(i)
+            changed(min(i, lst.GetCount() - 1))
+            if lst.GetCount() == 0:
+                add_lua.SetFocus()
+
+        add_lua.Bind(wx.EVT_BUTTON, lambda e: add(True))
+        add_prog.Bind(wx.EVT_BUTTON, lambda e: add(False))
+        remove.Bind(wx.EVT_BUTTON, lambda e: remove_sel())
+        up.Bind(wx.EVT_BUTTON, lambda e: move(-1))
+        down.Bind(wx.EVT_BUTTON, lambda e: move(1))
+        lst.Bind(wx.EVT_KEY_DOWN, lambda e: remove_sel() if e.GetKeyCode() == wx.WXK_DELETE
+                 else e.Skip())
+        row.windows = [lab, lst] + buttons
+        row.get = lambda: ";".join(items())
+        row.set = lambda v: lst.Set(po.split_list(v))
+
+    def _build_extra(self, panel, sizer, row: _Row, keyed) -> None:
+        key = row.key
+        label = next(keyed)
+        help_text = EXTRA_HELP[key]
+        if key in ("out_format", "in_format"):
+            lab = self._label(panel, label)
+            if key == "out_format":
+                ctrl = wx.Choice(panel, choices=[ps.format_label(f) for f in self.out_formats])
+                ctrl.Bind(wx.EVT_CHOICE, lambda e: (self._refresh(keep_focus=True), e.Skip()))
+            else:
+                ctrl = wx.Choice(panel, choices=["Detect from file extension"]
+                                 + [ps.format_label(f) for f in self.in_formats])
+                ctrl.Bind(wx.EVT_CHOICE, lambda e: (self._fill_extensions("in_ext"), e.Skip()))
+            describe(ctrl, help_text)
+            self._line(sizer, lab, ctrl)
+            row.windows = [lab, ctrl]
+            return
+        if key in ("save_template", "save_highlight", "save_reference"):
+            b = wx.Button(panel, label=label)
+            describe(b, help_text)
+            sizer.Add(b, 0, wx.ALL, 5)
+            b.Bind(wx.EVT_BUTTON, lambda e, k=key: self._save_default(k))
+            row.windows = [b]
+            return
+        if key in ("out_ext", "in_ext"):
+            lab = wx.StaticText(panel, label=label)
+            lc = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 150))
+            lc.EnableCheckBoxes(True)
+            lc.InsertColumn(0, "Extension", width=260)
+            lc.InsertColumn(1, "Pandoc's default", width=160)
+            describe(lc, help_text)
+            sizer.Add(lab, 0, wx.LEFT | wx.TOP, 5)
+            sizer.Add(lc, 0, wx.EXPAND | wx.ALL, 5)
+            row.windows = [lab, lc]
+            return
+        if key == "preview":
+            lab = wx.StaticText(panel, label=label)
+            ctrl = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
+                               size=(-1, 90))
+            describe(ctrl, help_text)
+            sizer.Add(lab, 0, wx.LEFT | wx.TOP, 5)
+            sizer.Add(ctrl, 0, wx.EXPAND | wx.ALL, 5)
+            row.windows = [lab, ctrl]
+            self.preview = ctrl
+
+    # ----------------------------------------------------------------- values
+    def _out_format(self) -> str:
+        c = self.rows["out_format"].windows[1]
+        return self.out_formats[max(0, c.GetSelection())] if self.out_formats else "html"
+
+    def _in_format(self) -> str:
+        sel = self.rows["in_format"].windows[1].GetSelection()
+        return self.in_formats[sel - 1] if sel > 0 else ""
 
     def _load(self, o: ps.PandocOptions) -> None:
+        out_c = self.rows["out_format"].windows[1]
         fmt = o.to_format if o.to_format in self.out_formats else (
             "html" if "html" in self.out_formats else self.out_formats[0])
-        self.out_choice.SetSelection(self.out_formats.index(fmt))
-        self.in_choice.SetSelection(self.in_formats.index(o.from_format) + 1
-                                    if o.from_format in self.in_formats else 0)
-        self.standalone_cb.SetValue(o.standalone)
-        self.toc_cb.SetValue(o.toc)
-        self.depth_spin.SetValue(o.toc_depth)
-        self.number_cb.SetValue(o.number_sections)
-        self.embed_cb.SetValue(o.embed_resources)
-        codes = [c for c, _ in ps.MATH_METHODS]
-        self.math_choice.SetSelection(codes.index(o.math) if o.math in codes else 0)
-        self.hl_choice.SetSelection(self.highlight_styles.index(o.highlight_style) + 1
-                                    if o.highlight_style in self.highlight_styles else 0)
-        self.wrap_choice.SetSelection(ps.WRAP_MODES.index(o.wrap) if o.wrap in ps.WRAP_MODES else 0)
-        self.title_text.SetValue(o.title)
-        self.lang_text.SetValue(o.lang)
-        self.shift_spin.SetValue(o.shift_heading_level)
-        self.cite_cb.SetValue(o.citeproc)
-        self.bib_text.SetValue(o.bibliography)
-        self.csl_text.SetValue(o.csl)
-        self.ref_text.SetValue(o.reference_doc)
-        self.tpl_text.SetValue(o.template)
-        self.filter_text.SetValue(o.lua_filters)
-        self.engine_combo.SetValue(o.pdf_engine or "Default")
-        self.extra_text.SetValue(o.extra_args)
-        self.auto_cb.SetValue(self.auto_export)
-        self.out_dir.SetValue(self.out_dir_value)
-        self.subdirs_cb.SetValue(self.include_subfolders)
-        self.types_text.SetValue(self.folder_types)
+        out_c.SetSelection(self.out_formats.index(fmt))
+        in_c = self.rows["in_format"].windows[1]
+        in_c.SetSelection(self.in_formats.index(o.from_format) + 1
+                          if o.from_format in self.in_formats else 0)
+        for spec in po.OPTIONS:
+            row = self.rows[spec.key]
+            if spec.key == "citation_method":
+                row.set(o.citation_method())
+            else:
+                row.set(po.get_value(o, spec))
+        self.advanced_cb.SetValue(self.show_advanced)
+        self._ext_format = {"out_ext": "", "in_ext": ""}
+        self._refresh()
 
     def collect(self) -> ps.PandocOptions:
-        o = ps.PandocOptions()
-        o.to_format = self.out_formats[max(0, self.out_choice.GetSelection())]
-        sel = self.in_choice.GetSelection()
-        o.from_format = self.in_formats[sel - 1] if sel > 0 else ""
-        o.standalone = self.standalone_cb.GetValue()
-        o.toc = self.toc_cb.GetValue()
-        o.toc_depth = self.depth_spin.GetValue()
-        o.number_sections = self.number_cb.GetValue()
-        o.embed_resources = self.embed_cb.GetValue()
-        o.math = ps.MATH_METHODS[max(0, self.math_choice.GetSelection())][0]
-        hl = self.hl_choice.GetSelection()
-        o.highlight_style = self.highlight_styles[hl - 1] if hl > 0 else ""
-        o.wrap = ps.WRAP_MODES[max(0, self.wrap_choice.GetSelection())]
-        o.title = self.title_text.GetValue().strip()
-        o.lang = self.lang_text.GetValue().strip()
-        o.shift_heading_level = self.shift_spin.GetValue()
-        o.citeproc = self.cite_cb.GetValue()
-        o.bibliography = self.bib_text.GetValue().strip()
-        o.csl = self.csl_text.GetValue().strip()
-        o.reference_doc = self.ref_text.GetValue().strip()
-        o.template = self.tpl_text.GetValue().strip()
-        o.lua_filters = self.filter_text.GetValue().strip()
-        engine = self.engine_combo.GetValue().strip()
-        o.pdf_engine = "" if engine.lower() in ("", "default") else engine
-        o.extra_args = self.extra_text.GetValue().strip()
+        """The settings shown in the window, as PandocOptions."""
+        o = copy.deepcopy(self.opts)
+        o.to_format = self._out_format()
+        o.from_format = self._in_format()
+        for spec in po.OPTIONS:
+            po.set_value(o, spec, self.rows[spec.key].get())
+        o.citeproc = o.values.get("citation_method", "") == "citeproc"
+        o.in_extensions = copy.deepcopy(self.opts.in_extensions)
+        o.out_extensions = copy.deepcopy(self.opts.out_extensions)
+        for key, store in (("out_ext", o.out_extensions), ("in_ext", o.in_extensions)):
+            fmt = self._ext_format.get(key)
+            if fmt:
+                changes = self._extension_changes(key)
+                if changes:
+                    store[fmt] = changes
+                else:
+                    store.pop(fmt, None)
         return o
 
-    # ------------------------------------------------- files and folders
-    def _types(self) -> Optional[set]:
-        return ps.parse_type_filter(self.types_text.GetValue())
+    def _extension_changes(self, key: str) -> Dict[str, bool]:
+        lc: wx.ListCtrl = self.rows[key].windows[1]
+        defaults = self._ext_defaults[key]
+        changes = {}
+        for i in range(lc.GetItemCount()):
+            name = lc.GetItemText(i)
+            on = lc.IsItemChecked(i)
+            if on != defaults.get(name, False):
+                changes[name] = on
+        return changes
 
-    def _label(self, path: str) -> str:
-        p = Path(path)
-        if not p.is_dir():
-            return f"{p.name}  ({p.parent})"
-        n = len(ps.folder_files(p, self.subdirs_cb.GetValue(), self._types()))
-        scope = " with subfolders" if self.subdirs_cb.GetValue() else ""
-        return f"Folder {p.name}{scope}, {n} file{'s' if n != 1 else ''}  ({p})"
+    def _fill_extensions(self, key: str) -> None:
+        """Show the extensions of the chosen input or output format."""
+        store = self.opts.out_extensions if key == "out_ext" else self.opts.in_extensions
+        old = self._ext_format.get(key)
+        if old:   # remember the changes made for the previous format
+            changes = self._extension_changes(key)
+            if changes:
+                store[old] = changes
+            else:
+                store.pop(old, None)
+        fmt = po.base_format(self._out_format() if key == "out_ext" else self._in_format())
+        lc: wx.ListCtrl = self.rows[key].windows[1]
+        exts = ps.list_extensions(fmt, self.pandoc) if fmt else []
+        lc.DeleteAllItems()
+        self._ext_defaults[key] = dict(exts)
+        changes = store.get(fmt, {})
+        for i, (name, default) in enumerate(exts):
+            lc.InsertItem(i, name)
+            lc.SetItem(i, 1, "on by default" if default else "off by default")
+            lc.CheckItem(i, changes.get(name, default))
+        self._ext_format[key] = fmt
+        show = bool(exts)
+        for w in self.rows[key].windows:
+            w.Show(show)
+        self._schedule_preview()
 
-    def _refresh_list(self, select: Optional[List[int]] = None) -> None:
-        if select is None:
-            select = list(self.file_list.GetSelections())
-        self.file_list.Set([self._label(p) for p in self.items])
-        for i in select:
-            if 0 <= i < len(self.items):
-                self.file_list.SetSelection(i)
+    # ------------------------------------------------------------ visibility
+    def _refresh(self, keep_focus: bool = False) -> None:
+        """Show the options for the chosen output format; hide the rest."""
+        self.show_advanced = self.advanced_cb.GetValue()
+        to = self._out_format()
+        frm = self._in_format() or None
+        visible_keys = set()
+        for page, _ in po.PAGES:
+            for spec in po.visible_specs(page, to, frm, self.show_advanced, self.flags):
+                visible_keys.add(spec.key)
+        save_ok = {
+            "save_template": "template" in visible_keys,
+            "save_highlight": "highlight_style" in visible_keys,
+            "save_reference": po.base_format(to) in ("docx", "odt", "pptx"),
+        }
+        page_has: Dict[str, bool] = {}
+        for key, row in self.rows.items():
+            if row.spec is not None:
+                show = key in visible_keys
+                page = row.spec.page
+            else:
+                show = save_ok.get(key, True)
+                page = next(p for p, _, k in EXTRAS if k == key)
+                if key in ("out_ext", "in_ext"):
+                    show = False   # _fill_extensions shows them when there are any
+            for w in row.windows:
+                w.Show(show)
+            page_has[page] = page_has.get(page, False) or show
+        self._fill_extensions("out_ext")
+        self._fill_extensions("in_ext")
+
+        # Pages with nothing to show are left out of the tab control.
+        current = self.book.GetCurrentPage()
+        wanted = [(p, t, panel) for p, t, panel in self.pages if page_has.get(p)]
+        for _, _, panel in self.pages:
+            if not any(panel is w for _, _, w in wanted):
+                panel.Hide()
+        shown = [self.book.GetPage(i) for i in range(self.book.GetPageCount())]
+        if shown != [panel for _, _, panel in wanted]:
+            self.book.Freeze()
+            while self.book.GetPageCount():
+                self.book.RemovePage(0)
+            for _, title, panel in wanted:
+                self.book.AddPage(panel, title)
+            for i in range(self.book.GetPageCount()):
+                if self.book.GetPage(i) is current:
+                    self.book.ChangeSelection(i)
+            self.book.Thaw()
+        for _, _, panel in wanted:
+            panel.Layout()
+            panel.FitInside()
         self._update_state()
+        self.Layout()
+        self._schedule_preview()
 
-    def add_items(self, paths: List[str], announce: bool = False) -> int:
-        """Add files and folders to the list. Returns how many were new."""
-        if self._worker is not None and self._worker.is_alive():
-            if announce:
-                self._say("Wait for the conversion to finish before adding more.")
-            return 0
-        known = {os.path.normcase(os.path.abspath(p)) for p in self.items}
-        added = 0
-        for p in paths:
-            if not p or not (Path(p).is_file() or Path(p).is_dir()):
-                continue
-            k = os.path.normcase(os.path.abspath(p))
-            if k in known:
-                continue
-            known.add(k)
-            self.items.append(p)
-            added += 1
-        self._refresh_list(select=[len(self.items) - 1] if added else None)
-        if announce:
-            self._say(f"{added} added. {self._summary()}")
-        return added
-
-    # Kept for callers of the earlier, files-only dialog.
-    add_files = add_items
-
-    def _summary(self) -> str:
-        folders = sum(1 for p in self.items if Path(p).is_dir())
-        files = len(self.items) - folders
-        parts = []
-        if files:
-            parts.append(f"{files} file{'s' if files != 1 else ''}")
-        if folders:
-            parts.append(f"{folders} folder{'s' if folders != 1 else ''}")
-        return (" and ".join(parts) + " in the list.") if parts else "The list is empty."
-
-    def _choose_folder(self) -> None:
-        start = ""
-        if self.items:
-            last = Path(self.items[-1])
-            start = str(last if last.is_dir() else last.parent)
-        with wx.DirDialog(self, "Add a folder to convert", defaultPath=start,
-                          style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
-                self.add_dir_btn.SetFocus()
-                return
-            path = dlg.GetPath()
-        if self.add_items([path]):
-            n = len(ps.folder_files(path, self.subdirs_cb.GetValue(), self._types()))
-            self._say(f"Folder {Path(path).name} added with {n} file{'s' if n != 1 else ''} to "
-                      f"convert. {self._summary()}")
+    def _update_state(self) -> None:
+        if self.pandoc:
+            ver = ps.pandoc_version(self.pandoc) or ""
+            where = " (built in)" if ps.is_bundled(self.pandoc) else ""
+            n = len([s for s in po.OPTIONS if self._row_visible(s.key)])
+            self.status.SetLabel(f"Pandoc {ver}{where}. {n} options shown for "
+                                 f"{ps.format_label(self._out_format())}.")
         else:
-            self._say(f"Folder {Path(path).name} is already in the list.")
-        self.file_list.SetFocus()
+            self.status.SetLabel("Pandoc is not installed. Press Install Pandoc to install it.")
+        if self.install_btn.HasFocus() and self.pandoc:
+            self.advanced_cb.SetFocus()
+        self.install_btn.Show(not self.pandoc)
 
-    def _clear_items(self) -> None:
-        self.items.clear()
-        self._refresh_list(select=[])
-        self.add_btn.SetFocus()
-        self._say("List cleared.")
+    def _row_visible(self, key: str) -> bool:
+        row = self.rows.get(key)
+        return bool(row and row.windows and row.windows[0].IsShown())
 
-    def _on_types_done(self, event: wx.FocusEvent) -> None:
-        event.Skip()
-        if any(Path(p).is_dir() for p in self.items):
-            wx.CallAfter(self._refresh_list)
-
-    def _choose_files(self) -> None:
-        with wx.FileDialog(self, "Add files to convert",
-                           wildcard="All supported files|*.pdf;*.md;*.markdown;*.docx;*.odt;*.epub;"
-                                    "*.html;*.htm;*.tex;*.rst;*.adoc;*.org;*.ipynb;*.rtf;*.txt;*.typ;"
-                                    "*.xml;*.pptx;*.xlsx;*.csv;*.tsv;*.json;*.wiki;*.textile;*.fb2|"
-                                    "All files (*.*)|*.*",
-                           style=wx.FD_OPEN | wx.FD_MULTIPLE | wx.FD_FILE_MUST_EXIST) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            paths = dlg.GetPaths()
-        added = self.add_items(paths)
-        self._say(f"{added} file{'s' if added != 1 else ''} added. {self._summary()}")
-        self.file_list.SetFocus()
-
-    def _remove_selected(self) -> None:
-        sels = sorted(self.file_list.GetSelections(), reverse=True)
-        if not sels:
-            self._say("Nothing is selected.")
-            return
-        for i in sels:
-            del self.items[i]
-        keep = [min(min(sels), len(self.items) - 1)] if self.items else []
-        self._refresh_list(select=keep)
-        (self.file_list if self.items else self.add_btn).SetFocus()
-        self._say(f"{len(sels)} removed. {self._summary()}")
-
-    def _on_list_key(self, event: wx.KeyEvent) -> None:
-        if event.GetKeyCode() in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
-            self._remove_selected()
-        else:
+    # ---------------------------------------------------------------- preview
+    def _on_any_change(self, event) -> None:
+        if event is not None:
             event.Skip()
+        self._schedule_preview()
 
-    def _choose_dir(self) -> None:
-        with wx.DirDialog(self, "Choose output folder", defaultPath=self.out_dir.GetValue()) as dlg:
-            if dlg.ShowModal() == wx.ID_OK:
-                self.out_dir.SetValue(dlg.GetPath())
-        self.out_dir.SetFocus()
+    def _schedule_preview(self) -> None:
+        if self._preview_timer is not None and self._preview_timer.IsRunning():
+            self._preview_timer.Restart(200)
+        else:
+            self._preview_timer = wx.CallLater(200, self._update_preview)
 
-    def _pick_file(self, txt: wx.TextCtrl, wildcard: str, multi: bool) -> None:
-        style = wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | (wx.FD_MULTIPLE if multi else 0)
-        with wx.FileDialog(self, "Choose file", wildcard=wildcard, style=style) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            paths = dlg.GetPaths() if multi else [dlg.GetPath()]
-        if multi and txt.GetValue().strip():
-            paths = [txt.GetValue().strip()] + paths
-        txt.SetValue(";".join(paths))
+    def _update_preview(self) -> None:
+        if not self or not hasattr(self, "preview"):
+            return
+        o = self.collect()
+        name = self.sample_input or "document.md"
+        try:
+            text = ps.command_preview(o, Path(name).name, self.pandoc)
+        except Exception as e:  # noqa: BLE001
+            text = f"(cannot show the command: {e})"
+        if self.preview.GetValue() != text:
+            self.preview.ChangeValue(text)
+
+    # ------------------------------------------------------------------ tools
+    def _choose(self, spec: po.OptionSpec, txt: wx.TextCtrl) -> None:
+        current = po.split_list(txt.GetValue()) if spec.kind == po.FILES else [txt.GetValue()]
+        start = str(Path(current[-1]).parent) if current and current[-1] else ""
+        if spec.kind == po.FOLDER:
+            with wx.DirDialog(self, spec.label, defaultPath=txt.GetValue() or start) as dlg:
+                if dlg.ShowModal() == wx.ID_OK:
+                    txt.SetValue(dlg.GetPath())
+        else:
+            style = wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT if spec.kind == po.SAVEFILE \
+                else wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+            if spec.kind == po.FILES:
+                style |= wx.FD_MULTIPLE
+            with wx.FileDialog(self, spec.label, defaultDir=start, wildcard=spec.wildcard,
+                               style=style) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                if spec.kind == po.FILES:
+                    paths = [p for p in current if p] + list(dlg.GetPaths())
+                    txt.SetValue("; ".join(dict.fromkeys(paths)))
+                else:
+                    txt.SetValue(dlg.GetPath())
         txt.SetFocus()
 
-    # --------------------------------------------------------------- convert
-    def _say(self, text: str, interrupt: bool = True) -> None:
-        self.announcer.speak(text, interrupt=interrupt)
-
-    def _log(self, msg: str) -> None:
-        def append():
-            if self:
-                self.log.AppendText(msg + "\n")
-        wx.CallAfter(append)
-
-    def _on_convert(self) -> None:
-        if not self.pandoc:
-            self._install_pandoc()
-            return
-        if self._worker and self._worker.is_alive():
-            return
-        if not self.items:
-            # Settings are chosen; now the files. Take the user to them.
-            self.book.SetSelection(FILES_PAGE)
-            self.add_btn.SetFocus()
-            self._say("Add the files or folders to convert, then press Convert or F5.")
-            return
-        opts = self.collect()
-        out_dir = self.out_dir.GetValue().strip()
-        self.log.Clear()
-        self._stop.clear()
-        self.book.SetSelection(FILES_PAGE)  # where the log is
-        self._say(f"Converting {self._summary()[:-len(' in the list.')]} "
-                  f"to {ps.format_label(opts.to_format)}.")
-        vs = None
-        if self.vision_settings is not None and self.describe_cb.GetValue():
-            from dataclasses import replace
-
-            vs = replace(self.vision_settings, enabled=True, lang=self.ocr_lang)
-        self._worker = threading.Thread(
-            target=self._run,
-            args=(list(self.items), opts, out_dir, vs, self.subdirs_cb.GetValue(), self._types()),
-            daemon=True)
-        self._worker.start()
-        self._update_state()
-
-    def _on_stop(self) -> None:
-        if self._worker and self._worker.is_alive() and not self._stop.is_set():
-            self._stop.set()
-            self.status.SetLabel("Stopping after the file being converted now...")
-            self._say("Stopping after the file being converted now.")
-
-    def _progress(self, text: str, speak: bool) -> None:
-        def show():
-            if self and self._worker is not None:
-                self.status.SetLabel(text)
-                if speak:
-                    self._say(text, interrupt=False)
-        wx.CallAfter(show)
-
-    def _run(self, items: List[str], opts: ps.PandocOptions, out_dir: str, vs=None,
-             recursive: bool = False, types: Optional[set] = None) -> None:
-        ok, failed = 0, []
-        jobs = ps.plan_batch(items, opts.to_format, out_dir, recursive, types, log_cb=self._log)
-        total = len(jobs)
-        if total > 1:
-            self._log(f"{total} files to convert.")
-        if vs is not None:
-            from . import vision
-
-            vision.hold()
-        next_quarter = 1
-        for i, job in enumerate(jobs, 1):
-            if self._stop.is_set():
-                self._log(f"Stopped. {total - i + 1} file{'s' if total - i + 1 != 1 else ''} "
-                          f"not converted.")
-                break
-            src, dest = job.source, job.dest
-            # Speak progress every quarter of a long batch; always show it.
-            speak = total >= 8 and i - 1 >= next_quarter * total / 4
-            if speak:
-                next_quarter += 1
-            self._progress(f"Converting {i} of {total}: {src.name}", speak and i > 1)
-            if total > 1:
-                self._log(f"--- {i} of {total}: {src}")
-            try:
-                if src.suffix.lower() == ".pdf":
-                    with tempfile.TemporaryDirectory() as tmp:
-                        md = Path(tmp) / (src.stem + ".md")
-                        self._log(f"Converting {src.name} to Markdown with pdfmd...")
-                        if self._converter_takes_flag():
-                            self.pdf_converter(src, md, vs is not None)
-                        else:  # an older converter without the flag
-                            self.pdf_converter(src, md)
-                        ps.convert(md, dest, opts, ocr_lang=self.ocr_lang, log_cb=self._log,
-                                   pandoc=self.pandoc, vision=vs)
-                else:
-                    ps.convert(src, dest, opts, ocr_lang=self.ocr_lang, log_cb=self._log,
-                               pandoc=self.pandoc, vision=vs)
-                ok += 1
-                self._last_output = dest
-            except Exception as e:  # noqa: BLE001
-                failed.append(src.name)
-                self._log(f"Error converting {src.name}: {e}")
-        if vs is not None:
-            vision.release()
-        wx.CallAfter(self._finished, ok, failed, total, self._stop.is_set())
-
-    def _converter_takes_flag(self) -> bool:
-        import inspect
-
+    def _save_default(self, which: str) -> None:
+        to = po.base_format(self._out_format())
         try:
-            return len(inspect.signature(self.pdf_converter).parameters) >= 3
-        except (TypeError, ValueError):
-            return False
-
-    def _finished(self, ok: int, failed: List[str], total: int, stopped: bool = False) -> None:
-        if not self:
-            return
-        self._worker = None
-        self._update_state()
-        if total == 0:
-            msg = ("Nothing to convert: the folders in the list have no files of the chosen "
-                   "types, or every file is already in the output format.")
-        else:
-            msg = f"Pandoc {'stopped' if stopped else 'finished'}: {ok} of {total} converted."
-        if failed:
-            names = ", ".join(failed[:10])
-            if len(failed) > 10:
-                names += f" and {len(failed) - 10} more"
-            msg += f" {len(failed)} failed: {names}."
-        self.status.SetLabel(msg)
-        self._log(msg)
-        self._say(msg)
-        if failed:
-            wx.MessageBox(msg + "\n\nSee the pandoc log for details.", "Pandoc Conversion",
+            if which == "save_template":
+                fmt = "latex" if to == "pdf" else to
+                data = ps.default_template(fmt, self.pandoc).encode("utf-8")
+                name, wildcard, use_key = f"default.{fmt}", "All files (*.*)|*.*", "template"
+            elif which == "save_reference":
+                data = ps.default_data_file(f"reference.{to}", self.pandoc)
+                name = f"reference.{to}"
+                wildcard = f"{to.upper()} files (*.{to})|*.{to}"
+                use_key = "reference_doc"
+            else:
+                style = self.rows["highlight_style"].get() or "pygments"
+                if style in ("none", "idiomatic") or style.lower().endswith(".theme"):
+                    style = "pygments"
+                data = ps.highlight_style_theme(style, self.pandoc).encode("utf-8")
+                name, wildcard, use_key = (f"{style}.theme",
+                                           "Theme files (*.theme)|*.theme", "highlight_style")
+        except Exception as e:  # noqa: BLE001
+            wx.MessageBox(f"Pandoc could not provide the file:\n{e}", "Save Default File",
                           wx.OK | wx.ICON_ERROR, self)
+            return
+        with wx.FileDialog(self, "Save As", defaultFile=name, wildcard=wildcard,
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+        try:
+            Path(path).write_bytes(data)
+        except OSError as e:
+            wx.MessageBox(f"Could not save the file:\n{e}", "Save Default File",
+                          wx.OK | wx.ICON_ERROR, self)
+            return
+        if wx.MessageBox(f"Saved {Path(path).name}. Use it for this conversion from now on?",
+                         "Use the Saved File?",
+                         wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION, self) == wx.YES:
+            self.rows[use_key].set(path)
+            self._say(f"{Path(path).name} will be used.")
+            self._schedule_preview()
+
+    def _reset(self) -> None:
+        if wx.MessageBox("Set every pandoc option back to its default value?",
+                         "Reset to Defaults", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+                         self) != wx.YES:
+            return
+        to = self._out_format()
+        self.opts = ps.PandocOptions(to_format=to)
+        self._load(self.opts)
+        self._say("Every pandoc option is back to its default value.")
 
     def _install_pandoc(self) -> None:
         cmd = ps.install_command()
@@ -741,41 +712,66 @@ class PandocDialog(wx.Dialog):
             subprocess.call(["cmd", "/c"] + cmd + ["&", "echo.", "&", "pause"],
                             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
         except Exception as e:  # noqa: BLE001
-            wx.MessageBox(f"Could not start winget:\n{e}", "Install Pandoc", wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox(f"Could not start winget:\n{e}", "Install Pandoc",
+                          wx.OK | wx.ICON_ERROR, self)
             return
         # winget updates PATH for new processes only; look in the usual places.
         os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + str(
             Path(os.environ.get("LOCALAPPDATA", "")) / "Pandoc")
         self.pandoc = ps.find_pandoc() or shutil.which("pandoc")
         if self.pandoc:
-            self.in_formats = ps.list_input_formats(self.pandoc)
-            self.out_formats = ps.list_output_formats(self.pandoc)
-            self._say("Pandoc installed and ready.")
+            self._say("Pandoc installed. Close and reopen this window to see every format.")
         else:
-            self._say("Pandoc was not found after installing. Try restarting Document Conversion Suite.")
+            self._say("Pandoc was not found after installing. Try restarting Document "
+                      "Conversion Suite.")
+        self.advanced_cb.SetFocus()
         self._update_state()
-        self.convert_btn.SetFocus() if self.convert_btn.IsEnabled() else self.file_list.SetFocus()
+        self.Layout()
+
+    # ------------------------------------------------------------------- keys
+    def access_key_text(self) -> str:
+        """Every page's Alt keys, for F1 and the documentation."""
+        lines = ["Pandoc Options window access keys", "",
+                 "Always available: Alt+V Show advanced options, Alt+F Reset to Defaults, "
+                 "Alt+P Install Pandoc (when pandoc is missing), Enter OK, Escape Cancel, "
+                 "Ctrl+Tab next page, Ctrl+Shift+Tab previous page.", ""]
+        for page, title in po.PAGES:
+            keyed = po.assign_access_keys(self._page_labels(page), RESERVED_KEYS)
+            parts = [f"Alt+{mnemonic_of(k)} {k.replace('&', '')}" for k in keyed]
+            lines.append(f"{title} page: " + "; ".join(parts) + ".")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _show_keys(self) -> None:
+        dlg = wx.Dialog(self, title="Pandoc Options Keys", size=(700, 520),
+                        style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        s = wx.BoxSizer(wx.VERTICAL)
+        txt = wx.TextCtrl(dlg, value=self.access_key_text(),
+                          style=wx.TE_MULTILINE | wx.TE_READONLY)
+        describe(txt, "Every access key in the Pandoc Options window. Read it with the arrow keys.")
+        close = wx.Button(dlg, wx.ID_CLOSE, "&Close")
+        close.Bind(wx.EVT_BUTTON, lambda e: dlg.EndModal(wx.ID_CLOSE))
+        dlg.SetEscapeId(wx.ID_CLOSE)
+        s.Add(txt, 1, wx.EXPAND | wx.ALL, 8)
+        s.Add(close, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
+        dlg.SetSizer(s)
+        txt.SetFocus()
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
-        if event.GetKeyCode() == wx.WXK_F5 and not event.HasAnyModifiers():
-            self._on_convert()
+        if event.GetKeyCode() == wx.WXK_F1 and not event.HasAnyModifiers():
+            self._show_keys()
             return
         event.Skip()
 
-    def _close(self) -> None:
-        if self._worker and self._worker.is_alive():
-            if wx.MessageBox("A conversion is running. Stop it after the current file and "
-                             "close this window?", "Convert with Pandoc",
-                             wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
-                return
+    def _say(self, text: str) -> None:
+        self.announcer.speak(text, interrupt=True)
+
+    def _on_ok(self, event) -> None:
         self.opts = self.collect()
-        self.auto_export = self.auto_cb.GetValue()
-        self.out_dir_value = self.out_dir.GetValue().strip()
-        self.describe_images = self.describe_cb.GetValue()
-        self.include_subfolders = self.subdirs_cb.GetValue()
-        self.folder_types = self.types_text.GetValue().strip()
-        self._stop.set()  # a running batch stops after its current file
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
+        self.show_advanced = self.advanced_cb.GetValue()
+        self.EndModal(wx.ID_OK)
+
+
+__all__ = ["PandocOptionsDialog", "PDF_ENGINES"]

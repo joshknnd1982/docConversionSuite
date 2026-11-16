@@ -659,10 +659,13 @@ def build_args(
             math = "mathml"
         else:
             math = ""  # docx/odt/pptx write native equations; others keep TeX
+    # pandoc 3.8+ has --math-method (the single-method flags are deprecated).
+    method_flag = flags is not None and "math-method" in flags
     if math == "mathjax":
-        args.append(f"--mathjax={MATHJAX_URL}")
+        args.append(f"--math-method=mathjax:{MATHJAX_URL}" if method_flag
+                    else f"--mathjax={MATHJAX_URL}")
     elif math in ("mathml", "katex", "webtex", "gladtex"):
-        args.append(f"--{math}")
+        args.append(f"--math-method={math}" if method_flag else f"--{math}")
 
     # Metadata: language and a page title so standalone output is labeled.
     lang = opts.lang.strip() or language_tag(ocr_lang)

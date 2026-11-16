@@ -25,11 +25,13 @@ Run as:
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import platform
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -69,7 +71,9 @@ try:
     from pdfmd.mathjax import apply_mathjax, count_math
     from pdfmd import pandoc_support as ps
     from pdfmd.gui_a11y import Announcer, MnemonicHandler, describe
-    from pdfmd.gui_pandoc import PandocDialog
+    from pdfmd.gui_pandoc import PandocOptionsDialog
+    from pdfmd.gui_pdf_settings import (DEFAULT_OPTIONS, OCR_CODES, PdfSettingsDialog,
+                                        merged_options)
     from pdfmd import tesseract_support as ts
     from pdfmd.gui_tesseract import TesseractDialog
     from pdfmd import vision
@@ -83,7 +87,9 @@ except ImportError:  # `python app_gui.py` from inside the package folder
     from pdfmd.mathjax import apply_mathjax, count_math
     from pdfmd import pandoc_support as ps
     from pdfmd.gui_a11y import Announcer, MnemonicHandler, describe
-    from pdfmd.gui_pandoc import PandocDialog
+    from pdfmd.gui_pandoc import PandocOptionsDialog
+    from pdfmd.gui_pdf_settings import (DEFAULT_OPTIONS, OCR_CODES, PdfSettingsDialog,
+                                        merged_options)
     from pdfmd import tesseract_support as ts
     from pdfmd.gui_tesseract import TesseractDialog
     from pdfmd import vision
@@ -94,59 +100,7 @@ APP_NAME = "Document Conversion Suite"
 APP_TITLE = "Document Conversion Suite"
 CONFIG_PATH = Path.home() / ".pdfmd_gui.json"
 
-OCR_MODES: List[Tuple[str, str]] = [
-    ("off", "Off: native text only (fastest)"),
-    ("auto", "Auto: OCR only scanned pages"),
-    ("tesseract", "Tesseract: OCR every page"),
-    ("ocrmypdf", "OCRmyPDF: high-fidelity OCR"),
-]
-OCR_CODES = [code for code, _ in OCR_MODES]
-
-# Common Tesseract language codes (the user can also type a custom code).
-OCR_LANGS: List[Tuple[str, str]] = [
-    ("eng", "English"),
-    ("deu", "German"),
-    ("fra", "French"),
-    ("spa", "Spanish"),
-    ("ita", "Italian"),
-    ("por", "Portuguese"),
-    ("nld", "Dutch"),
-    ("pol", "Polish"),
-    ("rus", "Russian"),
-    ("chi_sim", "Chinese, Simplified"),
-    ("chi_tra", "Chinese, Traditional"),
-    ("jpn", "Japanese"),
-    ("kor", "Korean"),
-    ("ara", "Arabic"),
-    ("hin", "Hindi"),
-    ("tur", "Turkish"),
-    ("vie", "Vietnamese"),
-]
-
-MATH_MODES: List[Tuple[str, str]] = [
-    ("ask", "Ask me (MathJax recommended)"),
-    ("always", "Always enable MathJax"),
-    ("never", "Never enable MathJax"),
-]
-MATH_CODES = [code for code, _ in MATH_MODES]
-
 THEMES = ("System", "Light", "Dark")
-
-DEFAULT_OPTIONS: Dict[str, object] = {
-    "ocr_mode": "auto",
-    "ocr_lang": "eng",
-    "preview": False,
-    "export_images": False,
-    "page_breaks": False,
-    "rm_edges": True,
-    "caps_to_headings": True,
-    "defrag": True,
-    "heading_ratio": 1.15,
-    "orphan_len": 45,
-    "math_mode": "ask",
-    "html_copy": False,
-    "describe_images": True,
-}
 
 BUILTIN_PROFILES: Dict[str, Dict[str, object]] = {
     "Default": DEFAULT_OPTIONS,
@@ -201,49 +155,54 @@ BUILTIN_PROFILES: Dict[str, Dict[str, object]] = {
 SHORTCUTS_TEXT = """Document Conversion Suite keyboard shortcuts
 
 Commands
-  Ctrl+O              Add PDF files
+  Ctrl+O              Add files (PDF, Word, EPUB, HTML, Markdown and every
+                      format pandoc reads)
+  Ctrl+Shift+A        Add a folder
   Ctrl+Shift+O        Choose output file or folder
-  F5 or Ctrl+Enter    Start conversion
-  Shift+F5            Stop conversion
-  Esc                 Stop conversion (while converting)
-  Ctrl+Shift+F        Open the output folder
-  Ctrl+Shift+M        Open the converted Markdown file
+  F5 or Ctrl+Enter    Convert
+  Shift+F5            Stop converting
+  Esc                 Stop converting (while converting)
+  Ctrl+Shift+P        PDF Settings (OCR, images, headings, math)
+  Ctrl+P              Pandoc Options (every pandoc setting)
+  Ctrl+Shift+F        Show the output folder
+  Ctrl+Shift+M        Open the converted file
   Ctrl+Shift+H        Open the accessible HTML file
   Ctrl+Shift+S        Speak the current status
-  Ctrl+P              Convert with Pandoc (Word, EPUB, HTML, LaTeX and more)
   Ctrl+T              Tesseract OCR: install, update, add languages
   Ctrl+I              Vision model: processor (GPU or CPU), model, updates
   Ctrl+D              Describe a folder of photos (web page or Markdown)
-  Ctrl+S              Save current settings as a profile
+  Ctrl+S              Save current PDF settings as a profile
   Delete              Remove selected files (in the input list)
   F1                  This help
   Alt+F4              Exit
 
 Go to a control (hold Alt)
-  Alt+I   Input PDF files list
-  Alt+A   Add PDFs button
-  Alt+R   Remove Selected button
-  Alt+Y   Empty List button
-  Alt+O   Output file or folder
-  Alt+B   Browse Output button
-  Alt+E   Profile
-  Alt+M   OCR mode
-  Alt+G   OCR language
-  Alt+X   Export images
-  Alt+K   Insert page breaks
-  Alt+3   Preview first 3 pages only
-  Alt+T   Remove repeating header and footer text
-  Alt+U   Promote uppercase lines to headings
-  Alt+J   Join short orphan lines into paragraphs
-  Alt+Z   Heading size ratio
-  Alt+W   Orphan line width
-  Alt+Q   When equations are found (MathJax)
-  Alt+N   Also save an accessible HTML copy
-  Alt+4   Describe pictures with the local AI vision model
-  Alt+C   Convert button
-  Alt+S   Stop button
-  Alt+D   Open Output Folder button
-  Alt+L   Conversion log
+  Files to convert
+    Alt+I   Input files and folders list
+    Alt+A   Add Files button
+    Alt+D   Add Folder button
+    Alt+R   Remove Selected Files button
+    Alt+E   Clear List button
+    Alt+B   Include subfolders of added folders (shown when the list has
+            a folder)
+    Alt+Y   File types to take from folders (shown when the list has a
+            folder)
+  Convert to
+    Alt+T   Convert to (Markdown, Word, EPUB, HTML, PDF and every other
+            format)
+    Alt+J   Join all files into one document (not for Markdown)
+    Alt+K   Keep the Markdown file too (PDFs to other formats)
+    Alt+4   Describe pictures with the local AI vision model
+    Alt+G   PDF Settings button
+    Alt+N   Pandoc Options button
+  Save to
+    Alt+O   Output file or folder
+    Alt+U   Choose Output button
+  Progress
+    Alt+C   Convert button
+    Alt+S   Stop button
+    Alt+W   Show Output Folder button
+    Alt+L   Conversion log
 
 Menus
   Alt+F   File menu
@@ -251,31 +210,26 @@ Menus
   Alt+V   View menu
   Alt+H   Help menu
 
-Convert with Pandoc window (Ctrl+P)
+PDF Settings window (Ctrl+Shift+P)
+  Alt+E profile, Alt+M OCR mode, Alt+G OCR language, Alt+X export
+  images, Alt+K insert page breaks, Alt+3 preview first 3 pages only,
+  Alt+T remove repeating header and footer text, Alt+U promote uppercase
+  lines to headings, Alt+J join short orphan lines, Alt+Z heading size
+  ratio, Alt+W orphan line width, Alt+Q when equations are found, Alt+N
+  save an accessible HTML copy, Alt+R reset to defaults, Enter OK,
+  Esc Cancel
+
+Pandoc Options window (Ctrl+P)
   Ctrl+Tab            Next page of settings
   Ctrl+Shift+Tab      Previous page of settings
-  F5 or Alt+V         Convert (with an empty list, goes to page 4)
-  Alt+P               Stop a running batch after the current file
-  Esc                 Close
-  Pages are in the order you use them: settings first, files last.
-  Page 1, Format and output: Alt+F input format, Alt+O output format,
-    Alt+D output folder, Alt+B browse, Alt+X also export PDF
-    conversions, Alt+C describe pictures
-  Page 2, Document options: Alt+S standalone, Alt+C table of contents,
-    Alt+N number sections, Alt+E embed resources, Alt+D contents depth,
-    Alt+M math rendering, Alt+H highlighting, Alt+W wrapping, Alt+T title,
-    Alt+L language, Alt+G shift heading levels
-  Page 3, Citations, templates and filters: Alt+C citations,
-    Alt+B bibliography, Alt+I choose bibliography, Alt+S citation style,
-    Alt+F choose style, Alt+R reference document, Alt+U choose document,
-    Alt+T template, Alt+M choose template, Alt+L filters, Alt+E choose
-    filter, Alt+N PDF engine, Alt+X extra pandoc arguments
-  Page 4, Files and folders: Alt+I list of files and folders, Alt+A add
-    files, Alt+F add folder, Alt+R remove selected (or Delete), Alt+E
-    clear list, Alt+S include subfolders, Alt+T file types to take from
-    folders, Alt+G pandoc log. Files and folders can also be dropped on
-    the list.
+  Alt+V               Show advanced options
+  Alt+F               Reset to defaults
   Alt+P               Install Pandoc (shown when pandoc is missing)
+  F1                  Every access key on every page
+  Enter               OK
+  Esc                 Cancel
+  Only the options for the chosen output format are shown. Every control
+  has its own Alt key, spoken by your screen reader with its name.
 
 Tesseract OCR window (Ctrl+T)
   Alt+S status, Alt+U check for updates, Alt+I install or update,
@@ -298,17 +252,20 @@ Describe a Folder of Photos window (Ctrl+D)
 
 Picture descriptions
   Photos, charts, graphs, maps and diagrams are described by a small AI
-  model that runs on your computer. With Export images on, the description
-  becomes the picture's alternative text; otherwise it is written in the
-  text as a block quote starting "Image description". Pictures that are
-  mostly text get their recognised text instead.
+  model that runs on your computer, in PDFs and in every other document.
+  Formats that keep pictures (Word, EPUB, HTML, PowerPoint...) get the
+  description as alternative text; text-only formats get it as a block
+  quote starting "Image description". Pictures that are mostly text get
+  their recognised text instead.
 
 Accessible math
-  When a converted document contains math, the suite offers to enable
-  MathJax (the answer defaults to Yes). MathJax adds a loader to the
-  Markdown file and saves an accessible HTML copy, where screen readers
-  speak each expression, it can be read in Braille, and you can explore
-  it piece by piece with the arrow keys.
+  When a PDF converted to Markdown contains math, the suite offers to
+  enable MathJax (the answer defaults to Yes). MathJax adds a loader to
+  the Markdown file and saves an accessible HTML copy, where screen
+  readers speak each expression, it can be read in Braille, and you can
+  explore it piece by piece with the arrow keys. Other output formats get
+  accessible math automatically: MathJax in web pages, MathML in EPUB and
+  native equations in Word, OpenDocument and PowerPoint.
 """
 
 
@@ -384,12 +341,12 @@ class PdfMdFrame(wx.Frame):
         self.theme = "System"
         self._profile_menu_ids: Dict[int, str] = {}
         self.pandoc_opts = ps.PandocOptions()
-        self.pandoc_auto = False
-        self.pandoc_out_dir = ""
-        self._last_pandoc_path: Optional[str] = None
-        self.pandoc_describe = True
-        self.pandoc_subfolders = False
-        self.pandoc_folder_types = ""
+        self.pandoc_show_advanced = False
+        self.pdf_options: Dict[str, object] = dict(DEFAULT_OPTIONS)
+        # "" converts to Markdown (pdfmd's accessible Markdown for PDFs);
+        # anything else is a pandoc output format.
+        self.target_format = ""
+        self.out_formats = ps.list_output_formats(ps.find_pandoc())
         self.vision_settings = vision.VisionSettings()
         self.album_folder = ""
         self.album_format = "html"
@@ -413,8 +370,8 @@ class PdfMdFrame(wx.Frame):
         # doesn't use are passed on.
         MnemonicHandler(self)
 
-        self._set_status("Ready. Press Ctrl+O to add PDF files, then F5 to convert. Press F1 for keyboard help.",
-                         announce=False)
+        self._set_status("Ready. Press Ctrl+O to add files, choose what to convert them to, "
+                         "then press F5. Press F1 for keyboard help.", announce=False)
         self._log(f"Document Conversion Suite {__version__}. "
                   f"Screen reader announcements: {self.announcer.describe()}.")
         pandoc = ps.find_pandoc()
@@ -438,16 +395,22 @@ class PdfMdFrame(wx.Frame):
 
         # File
         m_file = wx.Menu()
-        self.mi_add = m_file.Append(wx.ID_ANY, "&Add PDF Files...\tCtrl+O",
-                                    "Choose one or more PDF files to convert")
-        self.mi_output = m_file.Append(wx.ID_ANY, "Choose &Output File or Folder...\tCtrl+Shift+O",
-                                       "Choose where the Markdown output is saved")
+        self.mi_add = m_file.Append(wx.ID_ANY, "&Add Files...\tCtrl+O",
+                                    "Choose one or more documents to convert: PDF, Word, EPUB, "
+                                    "HTML, Markdown or any format pandoc reads")
+        self.mi_add_dir = m_file.Append(wx.ID_ANY, "Add Fo&lder...\tCtrl+Shift+A",
+                                        "Choose a folder; every document in it is converted")
+        self.mi_output = m_file.Append(wx.ID_ANY, "Choose &Output...\tCtrl+Shift+O",
+                                       "Choose where the converted files are saved")
         m_file.AppendSeparator()
         self.mi_convert = m_file.Append(wx.ID_ANY, "&Convert\tF5", "Start converting the input files")
-        self.mi_stop = m_file.Append(wx.ID_ANY, "&Stop Conversion\tShift+F5", "Stop the running conversion")
-        self.mi_pandoc = m_file.Append(wx.ID_ANY, "Convert Any Document with &Pandoc...\tCtrl+P",
-                                       "Convert to Word, EPUB, HTML, LaTeX and every other "
-                                       "format pandoc supports")
+        self.mi_stop = m_file.Append(wx.ID_ANY, "&Stop Converting\tShift+F5", "Stop the running conversion")
+        m_file.AppendSeparator()
+        self.mi_pdf_settings = m_file.Append(wx.ID_ANY, "PDF Settin&gs...\tCtrl+Shift+P",
+                                             "How PDFs are read: OCR, images, headings and math")
+        self.mi_pandoc = m_file.Append(wx.ID_ANY, "&Pandoc Options...\tCtrl+P",
+                                       "Every pandoc setting for Word, EPUB, HTML, LaTeX, PDF and "
+                                       "every other format")
         self.mi_tesseract = m_file.Append(wx.ID_ANY, "&Tesseract OCR (Install, Update, Languages)...\tCtrl+T",
                                           "Install or update Tesseract OCR and add OCR languages")
         self.mi_vision = m_file.Append(wx.ID_ANY, "&Vision Model (Picture Descriptions)...\tCtrl+I",
@@ -457,10 +420,10 @@ class PdfMdFrame(wx.Frame):
                                       "Describe every photo in a folder into a web page or "
                                       "Markdown file")
         m_file.AppendSeparator()
-        self.mi_open_folder = m_file.Append(wx.ID_ANY, "Open Output &Folder\tCtrl+Shift+F",
+        self.mi_open_folder = m_file.Append(wx.ID_ANY, "Show Output &Folder\tCtrl+Shift+F",
                                             "Open the folder that contains the output")
-        self.mi_open_md = m_file.Append(wx.ID_ANY, "Open Converted &Markdown File\tCtrl+Shift+M",
-                                        "Open the last converted Markdown file")
+        self.mi_open_md = m_file.Append(wx.ID_ANY, "Open Converted Fil&e\tCtrl+Shift+M",
+                                        "Open the last converted file")
         self.mi_open_html = m_file.Append(wx.ID_ANY, "Open Accessible &HTML File\tCtrl+Shift+H",
                                           "Open the last accessible HTML file in your browser")
         m_file.AppendSeparator()
@@ -474,7 +437,7 @@ class PdfMdFrame(wx.Frame):
                              "Apply a saved set of conversion options")
         m_prof.AppendSeparator()
         self.mi_save_profile = m_prof.Append(wx.ID_ANY, "&Save Current Settings as Profile...\tCtrl+S",
-                                             "Save the current options as a named profile")
+                                             "Save the current PDF settings as a named profile")
         self.mi_delete_profile = m_prof.Append(wx.ID_ANY, "&Delete Current Profile...",
                                                "Delete the selected custom profile")
         self.mi_reset = m_prof.Append(wx.ID_ANY, "&Reset Options to Defaults",
@@ -515,11 +478,13 @@ class PdfMdFrame(wx.Frame):
 
         b = self.Bind
         b(wx.EVT_MENU, lambda e: self._choose_inputs(), self.mi_add)
+        b(wx.EVT_MENU, lambda e: self._choose_folder(), self.mi_add_dir)
+        b(wx.EVT_MENU, lambda e: self._open_pdf_settings(), self.mi_pdf_settings)
         b(wx.EVT_MENU, lambda e: self._choose_output(), self.mi_output)
         b(wx.EVT_MENU, lambda e: self._on_convert(), self.mi_convert)
         b(wx.EVT_MENU, lambda e: self._on_cancel(), self.mi_stop)
         b(wx.EVT_MENU, lambda e: self._open_output_folder(), self.mi_open_folder)
-        b(wx.EVT_MENU, lambda e: self._open_last_file("md"), self.mi_open_md)
+        b(wx.EVT_MENU, lambda e: self._open_last_file("output"), self.mi_open_md)
         b(wx.EVT_MENU, lambda e: self._open_last_file("html"), self.mi_open_html)
         b(wx.EVT_MENU, lambda e: self._open_pandoc(), self.mi_pandoc)
         b(wx.EVT_MENU, lambda e: self._open_tesseract(), self.mi_tesseract)
@@ -546,157 +511,131 @@ class PdfMdFrame(wx.Frame):
         main = wx.BoxSizer(wx.VERTICAL)
         pad = 6
 
-        # ===================== Input and output ==============================
-        files_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Input and output")
+        # ===================== Files to convert ==============================
+        files_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Files to convert")
         fbox = files_sb.GetStaticBox()
 
-        lbl = wx.StaticText(fbox, label="&Input PDF files:")
+        lbl = wx.StaticText(fbox, label="&Input files and folders:")
         self.input_list = wx.ListBox(fbox, style=wx.LB_EXTENDED | wx.LB_NEEDED_SB, size=(-1, 110))
         self._describe(self.input_list,
-                       "PDF files to convert. Press Delete to remove the selected files. "
-                       "Add files with Ctrl+O or by dragging them here. "
-                       "All processing is local; nothing leaves your computer.")
+                       "Documents and folders to convert: PDF, Word, EPUB, HTML, Markdown, "
+                       "OpenDocument, PowerPoint and every other format pandoc reads. Add them "
+                       "with Ctrl+O or Ctrl+Shift+A, or drag them here. Press Delete to remove "
+                       "the selected items. All processing is local; nothing leaves your computer.")
         files_sb.Add(lbl, 0, wx.LEFT | wx.TOP, pad)
         files_sb.Add(self.input_list, 1, wx.EXPAND | wx.ALL, pad)
 
         row = wx.BoxSizer(wx.HORIZONTAL)
-        self.add_btn = wx.Button(fbox, label="&Add PDFs...")
-        self._describe(self.add_btn, "Choose one or more PDF files to add to the list. Shortcut: Ctrl+O.")
-        self.remove_btn = wx.Button(fbox, label="&Remove Selected")
-        self._describe(self.remove_btn, "Remove the selected files from the list. Shortcut: Delete in the list.")
-        self.clear_btn = wx.Button(fbox, label="Empt&y List")
-        self._describe(self.clear_btn, "Remove all files from the list.")
-        for btn in (self.add_btn, self.remove_btn, self.clear_btn):
+        self.add_btn = wx.Button(fbox, label="&Add Files...")
+        self._describe(self.add_btn, "Choose one or more documents to add to the list. Hold "
+                                     "Control or Shift to select several. Shortcut: Ctrl+O.")
+        self.add_dir_btn = wx.Button(fbox, label="Add Fol&der...")
+        self._describe(self.add_dir_btn,
+                       "Choose a folder. Every document in it is converted. Shortcut: Ctrl+Shift+A.")
+        self.remove_btn = wx.Button(fbox, label="&Remove Selected Files")
+        self._describe(self.remove_btn, "Remove the selected files and folders from the list. "
+                                        "Shortcut: Delete in the list.")
+        self.clear_btn = wx.Button(fbox, label="Cl&ear List")
+        self._describe(self.clear_btn, "Remove every file and folder from the list.")
+        for btn in (self.add_btn, self.add_dir_btn, self.remove_btn, self.clear_btn):
             row.Add(btn, 0, wx.RIGHT, pad)
         files_sb.Add(row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
 
+        self.subdirs_cb = wx.CheckBox(fbox, label="Include su&bfolders of added folders")
+        self._describe(self.subdirs_cb,
+                       "When checked, documents in the subfolders of each added folder are "
+                       "converted too. With an output folder, the subfolder layout is kept.")
+        files_sb.Add(self.subdirs_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
+        trow = wx.BoxSizer(wx.HORIZONTAL)
+        self.types_lbl = wx.StaticText(fbox, label="File t&ypes to take from folders:")
+        self.types_text = wx.TextCtrl(fbox)
+        self._describe(self.types_text,
+                       "Extensions to convert from added folders, separated by semicolons, for "
+                       "example pdf; docx; md. Leave empty to take every document. Files already "
+                       "in the output format are skipped. Files added one by one are always "
+                       "converted.")
+        trow.Add(self.types_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
+        trow.Add(self.types_text, 1, wx.ALIGN_CENTER_VERTICAL)
+        files_sb.Add(trow, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
+        main.Add(files_sb, 1, wx.EXPAND | wx.ALL, 8)
+
+        # ===================== Convert to ====================================
+        conv_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Convert to")
+        cbox = conv_sb.GetStaticBox()
+        crow = wx.BoxSizer(wx.HORIZONTAL)
+        lbl = wx.StaticText(cbox, label="Convert &to:")
+        self.target_choice = wx.Choice(
+            cbox, choices=["Markdown (recommended)"]
+            + [ps.format_label(f) for f in self.out_formats])
+        self._describe(self.target_choice,
+                       "The format to make. Markdown is the most accessible plain-text format; "
+                       "PDFs become Markdown with pdfmd's table, math and OCR support. Choose "
+                       "Word, EPUB, HTML, PDF, PowerPoint, LaTeX or any other format to convert "
+                       "with pandoc; its settings are in Pandoc Options (Ctrl+P).")
+        crow.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
+        crow.Add(self.target_choice, 1, wx.ALIGN_CENTER_VERTICAL)
+        conv_sb.Add(crow, 0, wx.EXPAND | wx.ALL, pad)
+
+        self.join_cb = wx.CheckBox(cbox, label="&Join all files into one document")
+        self._describe(self.join_cb,
+                       "Make one document from every file in the list, in the order of the "
+                       "list, instead of one document per file. The files can be in different "
+                       "formats. The output is then a single file.")
+        self.keep_md_cb = wx.CheckBox(cbox, label="&Keep the Markdown file too")
+        self._describe(self.keep_md_cb,
+                       "PDFs are first turned into Markdown, then into the chosen format. When "
+                       "checked, that Markdown file is saved too, next to the output.")
+        self.describe_cb = wx.CheckBox(cbox, label="Describe pictures with the local AI vision model (&4)")
+        self._describe(self.describe_cb,
+                       "Photos, charts, graphs, maps and diagrams without alternative text are "
+                       "described by a small AI model running on this computer, in PDFs and in "
+                       "every other document. Formats that keep pictures get the description as "
+                       "alternative text; text-only formats get it as a block quote. Choose GPU "
+                       "or CPU, and update the model, with Ctrl+I.")
+        for cb in (self.join_cb, self.keep_md_cb, self.describe_cb):
+            conv_sb.Add(cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
+        brow = wx.BoxSizer(wx.HORIZONTAL)
+        self.pdf_settings_btn = wx.Button(cbox, label="PDF Settin&gs...")
+        self._describe(self.pdf_settings_btn,
+                       "How PDFs are read: OCR mode and language, images, headers and footers, "
+                       "headings, and accessible math. Shortcut: Ctrl+Shift+P.")
+        self.pandoc_btn = wx.Button(cbox, label="Pandoc Optio&ns...")
+        self._describe(self.pandoc_btn,
+                       "Every pandoc setting for the chosen format: table of contents, "
+                       "numbering, citations, templates, styles, e-book covers, slides, PDF "
+                       "engines, filters and more. Shortcut: Ctrl+P.")
+        brow.Add(self.pdf_settings_btn, 0, wx.RIGHT, pad)
+        brow.Add(self.pandoc_btn, 0)
+        conv_sb.Add(brow, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
+        main.Add(conv_sb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        # ===================== Save to =======================================
+        save_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Save to")
+        sbox = save_sb.GetStaticBox()
         out_row = wx.BoxSizer(wx.HORIZONTAL)
-        lbl = wx.StaticText(fbox, label="&Output file or folder:")
-        self.out_text = wx.TextCtrl(fbox)
+        lbl = wx.StaticText(sbox, label="&Output file or folder:")
+        self.out_text = wx.TextCtrl(sbox)
         self._describe(self.out_text,
-                       "Where to save the Markdown. For one input this is a .md file; "
-                       "for several inputs it is a folder. Filled in automatically.")
-        self.browse_out_btn = wx.Button(fbox, label="&Browse Output...")
+                       "Where to save. For one file (or joined files) this is a file name; for "
+                       "several files it is a folder. Leave empty to save each file next to its "
+                       "original. Filled in automatically.")
+        self.browse_out_btn = wx.Button(sbox, label="Choose O&utput...")
         self._describe(self.browse_out_btn, "Choose the output file or folder. Shortcut: Ctrl+Shift+O.")
         out_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
         out_row.Add(self.out_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
         out_row.Add(self.browse_out_btn, 0, wx.ALIGN_CENTER_VERTICAL)
-        files_sb.Add(out_row, 0, wx.EXPAND | wx.ALL, pad)
-        main.Add(files_sb, 0, wx.EXPAND | wx.ALL, 8)
-
-        # ===================== Conversion options ============================
-        opts_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Conversion options")
-        obox = opts_sb.GetStaticBox()
-        grid = wx.FlexGridSizer(cols=4, vgap=pad, hgap=pad)
-        grid.AddGrowableCol(1, 1)
-        grid.AddGrowableCol(3, 1)
-
-        lbl_profile = wx.StaticText(obox, label="Profil&e:")
-        self.profile_choice = wx.Choice(obox)
-        self._describe(self.profile_choice,
-                       "Apply a saved set of options. Built-in profiles include one for math "
-                       "and science documents. Save your own with Ctrl+S.")
-        grid.Add(lbl_profile, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.profile_choice, 1, wx.EXPAND)
-        grid.Add((0, 0))
-        grid.Add((0, 0))
-
-        lbl_ocr = wx.StaticText(obox, label="OCR &mode:")
-        self.ocr_choice = wx.Choice(obox, choices=[label for _, label in OCR_MODES])
-        self._describe(self.ocr_choice,
-                       "Off uses the text stored in the PDF and is fastest. Auto detects scanned "
-                       "pages and runs OCR only where needed. Tesseract runs OCR on every page. "
-                       "OCRmyPDF gives the highest-fidelity OCR. OCR needs Tesseract installed.")
-        lbl_lang = wx.StaticText(obox, label="OCR lan&guage:")
-        self.lang_combo = wx.ComboBox(obox, choices=[f"{c} ({n})" for c, n in OCR_LANGS],
-                                      style=wx.CB_DROPDOWN)
-        self._describe(self.lang_combo,
-                       "Tesseract language code used for OCR. Choose from the list or type a code. "
-                       "Combine languages with a plus sign, for example eng+fra. "
-                       "Also sets the language of the accessible HTML copy.")
-        grid.Add(lbl_ocr, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.ocr_choice, 1, wx.EXPAND)
-        grid.Add(lbl_lang, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
-        grid.Add(self.lang_combo, 1, wx.EXPAND)
-        opts_sb.Add(grid, 0, wx.EXPAND | wx.ALL, pad)
-
-        checks = wx.GridSizer(cols=2, vgap=pad, hgap=24)
-        self.export_images_cb = wx.CheckBox(obox, label="E&xport images")
-        self._describe(self.export_images_cb,
-                       "Save the images in the PDF to a folder next to the output and link them "
-                       "from the Markdown with descriptive alternative text.")
-        self.page_breaks_cb = wx.CheckBox(obox, label="Insert page brea&ks")
-        self._describe(self.page_breaks_cb, "Insert a horizontal rule between pages.")
-        self.preview_cb = wx.CheckBox(obox, label="Preview first &3 pages only")
-        self._describe(self.preview_cb, "Convert only the first three pages, for a quick check.")
-        self.rm_edges_cb = wx.CheckBox(obox, label="Remove repeating header and footer &text")
-        self._describe(self.rm_edges_cb,
-                       "Remove running headers, footers and page numbers that repeat on every page.")
-        self.caps_cb = wx.CheckBox(obox, label="Promote &uppercase lines to headings")
-        self._describe(self.caps_cb, "Treat short lines written in all capitals as headings.")
-        self.defrag_cb = wx.CheckBox(obox, label="&Join short orphan lines into paragraphs")
-        self._describe(self.defrag_cb,
-                       "Merge short isolated lines into the previous paragraph so text reads "
-                       "smoothly.")
-        self.describe_cb = wx.CheckBox(obox, label="Describe pictures with the local AI vision model (&4)")
-        self._describe(self.describe_cb,
-                       "Photos, charts, graphs, maps and diagrams are described by a small AI model "
-                       "running on this computer. With Export images on, the description becomes "
-                       "each picture's alternative text; otherwise it is written as a block quote. "
-                       "Choose GPU or CPU, and update the model, with Ctrl+I.")
-        for cb in (self.export_images_cb, self.page_breaks_cb, self.preview_cb,
-                   self.rm_edges_cb, self.caps_cb, self.defrag_cb, self.describe_cb):
-            checks.Add(cb, 0)
-        opts_sb.Add(checks, 0, wx.EXPAND | wx.ALL, pad)
-
-        tune = wx.FlexGridSizer(cols=4, vgap=pad, hgap=pad)
-        lbl = wx.StaticText(obox, label="Heading si&ze ratio (percent of body text):")
-        self.heading_spin = wx.SpinCtrl(obox, min=100, max=250, initial=115,
-                                        style=wx.SP_ARROW_KEYS)
-        self.heading_spin.SetIncrement(5)
-        self._describe(self.heading_spin,
-                       "Text at least this many percent of the body text size becomes a heading. "
-                       "Lower values create more headings. Default 115.")
-        tune.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        tune.Add(self.heading_spin, 0)
-        lbl = wx.StaticText(obox, label="Orphan line &width (characters):")
-        self.orphan_spin = wx.SpinCtrl(obox, min=10, max=120, initial=45, style=wx.SP_ARROW_KEYS)
-        self._describe(self.orphan_spin,
-                       "Isolated lines up to this many characters are merged into the previous "
-                       "paragraph. Default 45.")
-        tune.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
-        tune.Add(self.orphan_spin, 0)
-        opts_sb.Add(tune, 0, wx.ALL, pad)
-
-        math_row = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
-        lbl = wx.StaticText(obox, label="When e&quations are found:")
-        self.math_choice = wx.Choice(obox, choices=[label for _, label in MATH_MODES])
-        self._describe(self.math_choice,
-                       "What to do when a converted document contains math. MathJax makes math "
-                       "accessible: screen readers speak it, it can be read in Braille, and you "
-                       "can explore it with the arrow keys. Enabling it adds a MathJax loader to "
-                       "the Markdown file and saves an accessible HTML copy. "
-                       "Ask me is the default, and the question defaults to Yes.")
-        math_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        math_row.Add(self.math_choice, 0)
-        opts_sb.Add(math_row, 0, wx.ALL, pad)
-        self.html_cb = wx.CheckBox(obox, label="Also save a&n accessible HTML copy of every document")
-        self._describe(self.html_cb,
-                       "Save an HTML version next to each Markdown file, with the document "
-                       "language, real headings and table header cells. Documents with math "
-                       "always get one when MathJax is enabled.")
-        opts_sb.Add(self.html_cb, 0, wx.ALL, pad)
-        main.Add(opts_sb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        save_sb.Add(out_row, 0, wx.EXPAND | wx.ALL, pad)
+        main.Add(save_sb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # ===================== Progress ======================================
         prog_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Progress")
         pbox = prog_sb.GetStaticBox()
         act = wx.BoxSizer(wx.HORIZONTAL)
         self.convert_btn = wx.Button(pbox, label="&Convert")
-        self._describe(self.convert_btn, "Start converting the files in the list. Shortcut: F5 or Ctrl+Enter.")
+        self._describe(self.convert_btn, "Convert the files in the list. Shortcut: F5 or Ctrl+Enter.")
         self.stop_btn = wx.Button(pbox, label="&Stop")
-        self._describe(self.stop_btn, "Stop the running conversion. Shortcut: Shift+F5 or Escape.")
-        self.open_folder_btn = wx.Button(pbox, label="Open Output Fol&der")
+        self._describe(self.stop_btn, "Stop converting. Shortcut: Shift+F5 or Escape.")
+        self.open_folder_btn = wx.Button(pbox, label="Sho&w Output Folder")
         self._describe(self.open_folder_btn,
                        "Open the folder containing the converted files. Shortcut: Ctrl+Shift+F.")
         for btn in (self.convert_btn, self.stop_btn, self.open_folder_btn):
@@ -712,7 +651,7 @@ class PdfMdFrame(wx.Frame):
 
         lbl = wx.StaticText(pbox, label="Conversion &log:")
         self.log_text = wx.TextCtrl(pbox, style=wx.TE_MULTILINE | wx.TE_READONLY,
-                                    size=(-1, 140))
+                                    size=(-1, 120))
         self._describe(self.log_text,
                        "Messages from the conversion. Read it with the arrow keys.")
         prog_sb.Add(lbl, 0, wx.LEFT | wx.TOP, pad)
@@ -724,13 +663,20 @@ class PdfMdFrame(wx.Frame):
 
         # Events
         self.add_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_inputs())
+        self.add_dir_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_folder())
         self.remove_btn.Bind(wx.EVT_BUTTON, lambda e: self._remove_selected())
         self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self._clear_inputs())
+        self.subdirs_cb.Bind(wx.EVT_CHECKBOX, lambda e: self._refresh_input_list(
+            select=self.input_list.GetSelections()[0] if self.input_list.GetSelections() else None))
+        self.types_text.Bind(wx.EVT_KILL_FOCUS, self._on_types_done)
+        self.target_choice.Bind(wx.EVT_CHOICE, lambda e: self._on_target_changed())
+        self.join_cb.Bind(wx.EVT_CHECKBOX, lambda e: self._on_join_changed())
+        self.pdf_settings_btn.Bind(wx.EVT_BUTTON, lambda e: self._open_pdf_settings())
+        self.pandoc_btn.Bind(wx.EVT_BUTTON, lambda e: self._open_pandoc())
         self.browse_out_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_output())
         self.convert_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_convert())
         self.stop_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_cancel())
         self.open_folder_btn.Bind(wx.EVT_BUTTON, lambda e: self._open_output_folder())
-        self.profile_choice.Bind(wx.EVT_CHOICE, self._on_profile_choice)
         self.input_list.Bind(wx.EVT_KEY_DOWN, self._on_list_key)
         self.input_list.Bind(wx.EVT_LISTBOX, lambda e: self._update_buttons())
         self.out_text.Bind(wx.EVT_TEXT, self._on_output_edited)
@@ -738,6 +684,7 @@ class PdfMdFrame(wx.Frame):
         drop = PdfDropTarget(self)
         self.input_list.SetDropTarget(drop)
         self.panel.SetDropTarget(PdfDropTarget(self))
+        self._update_visibility()
 
     # ------------------------------------------------------------------ config
     def _load_config(self, data: dict) -> None:
@@ -763,11 +710,36 @@ class PdfMdFrame(wx.Frame):
         opts = data.get("options")
         self._apply_options_dict(opts if isinstance(opts, dict) else DEFAULT_OPTIONS)
 
+        pandoc = data.get("pandoc")
+        old_auto_export = False
+        if isinstance(pandoc, dict):
+            self.pandoc_opts = ps.PandocOptions.from_dict(pandoc.get("options", {}))
+            self.pandoc_show_advanced = bool(pandoc.get("show_advanced", False))
+            old_auto_export = bool(pandoc.get("auto_export", False))
+            # Batch settings that lived in the pandoc window before 1.9.0.
+            self.subdirs_cb.SetValue(bool(data.get("include_subfolders",
+                                                   pandoc.get("include_subfolders", False))))
+            self.types_text.ChangeValue(str(data.get("folder_types",
+                                                     pandoc.get("folder_types", "")) or ""))
+
+        target = data.get("convert_to")
+        if isinstance(target, str):
+            self._set_target(target)
+        elif old_auto_export:
+            # 1.8 "Also export every PDF conversion": same files as before.
+            self._set_target(self.pandoc_opts.to_format)
+            self.keep_md_cb.SetValue(True)
+            self._log("Your 1.8 setting \"also export to "
+                      f"{ps.format_label(self.pandoc_opts.to_format)}\" is now Convert to, with "
+                      "Keep the Markdown file too checked.")
+        self.keep_md_cb.SetValue(bool(data.get("keep_markdown", self.keep_md_cb.GetValue())))
+        self.join_cb.SetValue(bool(data.get("join_files", False)))
+
         inputs = data.get("last_inputs")
         if not isinstance(inputs, list):
             last = data.get("last_input")
-            inputs = [last] if isinstance(last, str) and last.lower().endswith(".pdf") else []
-        inputs = [p for p in inputs if isinstance(p, str) and Path(p).is_file()]
+            inputs = [last] if isinstance(last, str) else []
+        inputs = [p for p in inputs if isinstance(p, str) and Path(p).exists()]
         last_output = data.get("last_output")
         if inputs:
             self.add_inputs(inputs, announce=False)
@@ -775,15 +747,7 @@ class PdfMdFrame(wx.Frame):
             self.out_text.ChangeValue(last_output)
             self._output_is_auto = bool(data.get("output_is_auto", True))
             self._last_output_path = last_output
-
-        pandoc = data.get("pandoc")
-        if isinstance(pandoc, dict):
-            self.pandoc_opts = ps.PandocOptions.from_dict(pandoc.get("options", {}))
-            self.pandoc_auto = bool(pandoc.get("auto_export", False))
-            self.pandoc_out_dir = str(pandoc.get("out_dir", "") or "")
-            self.pandoc_describe = bool(pandoc.get("describe_images", True))
-            self.pandoc_subfolders = bool(pandoc.get("include_subfolders", False))
-            self.pandoc_folder_types = str(pandoc.get("folder_types", "") or "")
+            self._suggest_output()
 
         vis = data.get("vision")
         if isinstance(vis, dict):
@@ -799,6 +763,7 @@ class PdfMdFrame(wx.Frame):
                 self.SetSize((max(760, int(size[0])), max(640, int(size[1]))))
             except Exception:
                 pass
+        self._update_visibility()
 
     def _save_config(self) -> None:
         data = {
@@ -811,13 +776,14 @@ class PdfMdFrame(wx.Frame):
             "profile": self.current_profile,
             "profiles": self.custom_profiles,
             "window_size": list(self.GetSize()) if not self.IsMaximized() else None,
+            "convert_to": self.target_format,
+            "join_files": self.join_cb.GetValue(),
+            "keep_markdown": self.keep_md_cb.GetValue(),
+            "include_subfolders": self.subdirs_cb.GetValue(),
+            "folder_types": self.types_text.GetValue().strip(),
             "pandoc": {
                 "options": self.pandoc_opts.to_dict(),
-                "auto_export": self.pandoc_auto,
-                "out_dir": self.pandoc_out_dir,
-                "describe_images": self.pandoc_describe,
-                "include_subfolders": self.pandoc_subfolders,
-                "folder_types": self.pandoc_folder_types,
+                "show_advanced": self.pandoc_show_advanced,
             },
             "vision": self.vision_settings.to_dict(),
             "album": {"folder": self.album_folder, "format": self.album_format},
@@ -864,7 +830,15 @@ class PdfMdFrame(wx.Frame):
             self.remove_btn: not busy and has_sel,
             self.clear_btn: not busy and has_inputs,
             self.add_btn: not busy,
+            self.add_dir_btn: not busy,
             self.browse_out_btn: not busy,
+            self.target_choice: not busy,
+            self.join_cb: not busy,
+            self.keep_md_cb: not busy,
+            self.subdirs_cb: not busy,
+            self.types_text: not busy,
+            self.pdf_settings_btn: not busy,
+            self.pandoc_btn: not busy,
         }
         # Move focus away from a control that is about to be disabled, so
         # keyboard and screen reader users never lose their place.
@@ -881,53 +855,142 @@ class PdfMdFrame(wx.Frame):
         self.mi_convert.Enable(not busy)
         self.mi_stop.Enable(busy)
         self.mi_add.Enable(not busy)
+        self.mi_add_dir.Enable(not busy)
         self.mi_output.Enable(not busy)
+        self.mi_pdf_settings.Enable(not busy)
+        self.mi_pandoc.Enable(not busy)
         self.mi_open_folder.Enable(has_output)
-        self.mi_open_md.Enable(has_output and str(self._last_output_path).lower().endswith(".md"))
+        self.mi_open_md.Enable(has_output)
         self.mi_open_html.Enable(bool(self._last_html_path))
+
+    # -------------------------------------------------------- what is shown
+    def _has_folders(self) -> bool:
+        return any(Path(p).is_dir() for p in self._input_paths)
+
+    def _may_have_pdfs(self) -> bool:
+        return any(Path(p).is_dir() or p.lower().endswith(".pdf") for p in self._input_paths)
+
+    def _update_visibility(self) -> None:
+        """Show only the controls that do something for the current choices."""
+        md = self.target_format == ""
+        wanted = {
+            self.join_cb: not md,
+            self.keep_md_cb: not md and self._may_have_pdfs(),
+            self.subdirs_cb: self._has_folders(),
+            self.types_lbl: self._has_folders(),
+            self.types_text: self._has_folders(),
+        }
+        focus = wx.Window.FindFocus()
+        if focus in wanted and not wanted[focus]:
+            self.target_choice.SetFocus()
+        changed = False
+        for w, show in wanted.items():
+            if w.IsShown() != show:
+                w.Show(show)
+                changed = True
+        if changed:
+            self.panel.Layout()
+
+    def _target_ext(self) -> str:
+        return ".md" if not self.target_format else ps.output_extension(self.target_format)
+
+    def _set_target(self, fmt: str) -> None:
+        if fmt and fmt not in self.out_formats:
+            return
+        self.target_format = fmt
+        self.target_choice.SetSelection(0 if not fmt else self.out_formats.index(fmt) + 1)
+        if fmt:
+            self.pandoc_opts.to_format = fmt
+
+    def _on_target_changed(self) -> None:
+        sel = self.target_choice.GetSelection()
+        self._set_target("" if sel <= 0 else self.out_formats[sel - 1])
+        self._update_visibility()
+        self._suggest_output()
+        if self.target_format == "pdf":
+            self._log("PDF output needs a PDF engine such as a LaTeX distribution, Typst or "
+                      "WeasyPrint, installed separately. Choose it in Pandoc Options, PDF page.")
+
+    def _on_join_changed(self) -> None:
+        self._suggest_output()
+        if self.join_cb.GetValue():
+            self._set_status("All files will be joined into one document, in the order of the "
+                             "list.", interrupt=True)
 
     # ------------------------------------------------------------ input files
     def add_inputs(self, paths, announce: bool = True) -> None:
         if self._busy():
             return
+        supported = set(ps.supported_input_extensions())
         added = 0
         skipped = 0
         for p in paths:
             p = os_display_path(str(p))
-            if not p.lower().endswith(".pdf"):
+            path = Path(p)
+            if not path.is_dir() and path.suffix.lower() not in supported:
                 skipped += 1
                 continue
             if p in self._input_paths:
                 continue
             self._input_paths.append(p)
             added += 1
-        self._refresh_input_list()
+        self._refresh_input_list(select=len(self._input_paths) - 1 if added else None)
+        self._update_visibility()
         self._suggest_output()
         self._update_buttons()
         if announce:
-            msg = f"{added} file{'s' if added != 1 else ''} added. {len(self._input_paths)} in the list."
+            msg = f"{added} item{'s' if added != 1 else ''} added. {len(self._input_paths)} in the list."
             if skipped:
-                msg += f" {skipped} non-PDF file{'s' if skipped != 1 else ''} ignored."
+                msg += (f" {skipped} file{'s' if skipped != 1 else ''} ignored: not a document "
+                        "this program can read.")
             self._set_status(msg)
 
+    def _label(self, path: str) -> str:
+        p = Path(path)
+        if not p.is_dir():
+            return f"{p.name}  ({p.parent})"
+        recursive = self.subdirs_cb.GetValue()
+        n = len(ps.folder_files(p, recursive, ps.parse_type_filter(self.types_text.GetValue())))
+        scope = " with subfolders" if recursive else ""
+        return f"Folder {p.name}{scope}, {n} file{'s' if n != 1 else ''}  ({p})"
+
     def _refresh_input_list(self, select: Optional[int] = None) -> None:
-        items = [f"{Path(p).name}  ({Path(p).parent})" for p in self._input_paths]
+        items = [self._label(p) for p in self._input_paths]
         self.input_list.Set(items)
         if items:
             idx = 0 if select is None else max(0, min(select, len(items) - 1))
             self.input_list.SetSelection(idx)
 
+    def _on_types_done(self, event) -> None:
+        event.Skip()
+        if self._has_folders():
+            wx.CallAfter(self._refresh_input_list)
+
     def _choose_inputs(self) -> None:
         if self._busy():
             return
         start_dir = str(Path(self._input_paths[-1]).parent) if self._input_paths else ""
-        with wx.FileDialog(self, "Add PDF files", defaultDir=start_dir,
-                           wildcard="PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
+        exts = ";".join("*" + e for e in ps.supported_input_extensions())
+        with wx.FileDialog(self, "Add files", defaultDir=start_dir,
+                           wildcard=f"Documents ({exts})|{exts}|PDF files (*.pdf)|*.pdf|"
+                                    "All files (*.*)|*.*",
                            style=wx.FD_OPEN | wx.FD_MULTIPLE | wx.FD_FILE_MUST_EXIST) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             paths = dlg.GetPaths()
         self.add_inputs(paths)
+        self.input_list.SetFocus()
+
+    def _choose_folder(self) -> None:
+        if self._busy():
+            return
+        start_dir = str(Path(self._input_paths[-1]).parent) if self._input_paths else ""
+        with wx.DirDialog(self, "Add a folder of documents", defaultPath=start_dir,
+                          style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+        self.add_inputs([path])
         self.input_list.SetFocus()
 
     def _remove_selected(self) -> None:
@@ -940,23 +1003,29 @@ class PdfMdFrame(wx.Frame):
         if self._output_is_auto:
             self.out_text.ChangeValue("")
         self._suggest_output()
+        self._update_visibility()
         self._update_buttons()
         n = len(sels)
-        self._set_status(f"{n} file{'s' if n != 1 else ''} removed. "
+        self._set_status(f"{n} item{'s' if n != 1 else ''} removed. "
                          f"{len(self._input_paths)} in the list.", interrupt=True)
         if not self._input_paths:
             self.add_btn.SetFocus()
 
     def _clear_inputs(self) -> None:
-        if self._busy():
+        if self._busy() or not self._input_paths:
+            return
+        n = len(self._input_paths)
+        if n > 1 and wx.MessageBox(f"Remove all {n} items from the list?", "Clear List",
+                                   wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
             return
         self._input_paths = []
         self._refresh_input_list()
         if self._output_is_auto:
             self.out_text.ChangeValue("")
+        self._update_visibility()
         self._update_buttons()
         self.add_btn.SetFocus()
-        self._set_status("Input list emptied.", interrupt=True)
+        self._set_status("The list is empty.", interrupt=True)
 
     def _on_list_key(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
@@ -969,15 +1038,35 @@ class PdfMdFrame(wx.Frame):
         self._output_is_auto = False
         event.Skip()
 
+    def _single_output(self) -> bool:
+        """True when the output is one file: one input file, or joined files."""
+        if self.join_cb.GetValue() and self.target_format:
+            return True
+        return len(self._input_paths) == 1 and Path(self._input_paths[0]).is_file()
+
+    def _joined_name(self) -> Path:
+        first = Path(self._input_paths[0])
+        base = first.parent if first.is_file() else first
+        return base / (first.stem + "_joined" + self._target_ext())
+
     def _suggest_output(self) -> None:
         if not self._input_paths:
             return
-        if self.out_text.GetValue().strip() and not self._output_is_auto:
+        current = self.out_text.GetValue().strip()
+        if current and not self._output_is_auto:
+            # Keep the user's choice, but follow the chosen format.
+            p = Path(current)
+            if p.suffix and self._single_output() and not p.is_dir():
+                new = p.with_suffix(self._target_ext())
+                if new != p:
+                    self.out_text.ChangeValue(os_display_path(new))
             return
-        if len(self._input_paths) == 1:
-            value = os_display_path(Path(self._input_paths[0]).with_suffix(".md"))
+        if self.join_cb.GetValue() and self.target_format:
+            value = os_display_path(self._joined_name())
+        elif self._single_output():
+            value = os_display_path(Path(self._input_paths[0]).with_suffix(self._target_ext()))
         else:
-            value = os_display_path(Path(self._input_paths[0]).parent)
+            value = ""   # next to each original
         self.out_text.ChangeValue(value)
         self._output_is_auto = True
 
@@ -985,18 +1074,27 @@ class PdfMdFrame(wx.Frame):
         if self._busy():
             return
         current = self.out_text.GetValue().strip()
-        if len(self._input_paths) > 1:
+        if not self._single_output():
             with wx.DirDialog(self, "Choose output folder", defaultPath=current,
                               style=wx.DD_DEFAULT_STYLE) as dlg:
                 if dlg.ShowModal() != wx.ID_OK:
                     return
                 path = dlg.GetPath()
         else:
-            base = Path(current) if current else (
-                Path(self._input_paths[0]).with_suffix(".md") if self._input_paths else Path("output.md"))
-            with wx.FileDialog(self, "Save Markdown as", defaultDir=str(base.parent),
+            ext = self._target_ext()
+            if current:
+                base = Path(current)
+            elif self.join_cb.GetValue() and self.target_format:
+                base = self._joined_name()
+            elif self._input_paths:
+                base = Path(self._input_paths[0]).with_suffix(ext)
+            else:
+                base = Path("output" + ext)
+            name = ps.FORMAT_NAMES.get(self.target_format, "Markdown") if self.target_format \
+                else "Markdown"
+            with wx.FileDialog(self, "Save as", defaultDir=str(base.parent),
                                defaultFile=base.name,
-                               wildcard="Markdown files (*.md)|*.md|All files (*.*)|*.*",
+                               wildcard=f"{name} (*{ext})|*{ext}|All files (*.*)|*.*",
                                style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dlg:
                 if dlg.ShowModal() != wx.ID_OK:
                     return
@@ -1010,12 +1108,13 @@ class PdfMdFrame(wx.Frame):
     def _profile_names(self) -> List[str]:
         return list(BUILTIN_PROFILES.keys()) + sorted(self.custom_profiles.keys())
 
+    def _profile_options(self, name: str) -> Optional[dict]:
+        return BUILTIN_PROFILES.get(name) or self.custom_profiles.get(name)
+
     def _refresh_profiles(self) -> None:
         names = self._profile_names()
         if self.current_profile not in names:
             self.current_profile = "Default"
-        self.profile_choice.Set(names)
-        self.profile_choice.SetStringSelection(self.current_profile)
 
         # Rebuild the Profiles > Apply Profile submenu.
         for item_id in list(self._profile_menu_ids):
@@ -1039,13 +1138,8 @@ class PdfMdFrame(wx.Frame):
         if name:
             self._apply_profile(name)
 
-    def _on_profile_choice(self, event) -> None:
-        name = self.profile_choice.GetStringSelection()
-        if name:
-            self._apply_profile(name, announce=False)
-
     def _apply_profile(self, name: str, announce: bool = True) -> None:
-        opts = BUILTIN_PROFILES.get(name) or self.custom_profiles.get(name)
+        opts = self._profile_options(name)
         if opts is None:
             return
         self._apply_options_dict(opts)
@@ -1102,70 +1196,18 @@ class PdfMdFrame(wx.Frame):
 
     # ------------------------------------------------------------ options I/O
     def _lang_code(self) -> str:
-        raw = self.lang_combo.GetValue().strip()
-        code = raw.split(" (")[0].strip() if raw else ""
-        return code or "eng"
+        return str(self.pdf_options.get("ocr_lang") or "eng")
 
     def _options_from_controls(self) -> dict:
-        return {
-            "ocr_mode": OCR_CODES[max(0, self.ocr_choice.GetSelection())],
-            "ocr_lang": self._lang_code(),
-            "preview": self.preview_cb.GetValue(),
-            "export_images": self.export_images_cb.GetValue(),
-            "page_breaks": self.page_breaks_cb.GetValue(),
-            "rm_edges": self.rm_edges_cb.GetValue(),
-            "caps_to_headings": self.caps_cb.GetValue(),
-            "defrag": self.defrag_cb.GetValue(),
-            "heading_ratio": round(self.heading_spin.GetValue() / 100.0, 2),
-            "orphan_len": int(self.orphan_spin.GetValue()),
-            "math_mode": MATH_CODES[max(0, self.math_choice.GetSelection())],
-            "html_copy": self.html_cb.GetValue(),
-            "describe_images": self.describe_cb.GetValue(),
-        }
+        return {**self.pdf_options, "describe_images": self.describe_cb.GetValue()}
 
     def _apply_options_dict(self, opts: dict) -> None:
         # Options a profile doesn't mention keep their current value for the
         # OCR language; everything else falls back to the defaults.
-        current_lang = self._lang_code() if self.lang_combo.GetValue() else "eng"
-        o = {**DEFAULT_OPTIONS, "ocr_lang": current_lang, **opts}
-
-        mode = o.get("ocr_mode")
-        self.ocr_choice.SetSelection(OCR_CODES.index(mode) if mode in OCR_CODES else 0)
-
-        lang = str(o.get("ocr_lang") or "eng")
-        names = dict(OCR_LANGS)
-        self.lang_combo.SetValue(f"{lang} ({names[lang]})" if lang in names else lang)
-
-        self.preview_cb.SetValue(bool(o["preview"]))
-        self.export_images_cb.SetValue(bool(o["export_images"]))
-        self.page_breaks_cb.SetValue(bool(o["page_breaks"]))
-        self.rm_edges_cb.SetValue(bool(o["rm_edges"]))
-        self.caps_cb.SetValue(bool(o["caps_to_headings"]))
-        self.defrag_cb.SetValue(bool(o["defrag"]))
-        try:
-            self.heading_spin.SetValue(int(round(float(o["heading_ratio"]) * 100)))
-        except Exception:
-            self.heading_spin.SetValue(115)
-        try:
-            self.orphan_spin.SetValue(int(o["orphan_len"]))
-        except Exception:
-            self.orphan_spin.SetValue(45)
-        math_mode = o.get("math_mode")
-        self.math_choice.SetSelection(MATH_CODES.index(math_mode) if math_mode in MATH_CODES else 0)
-        self.html_cb.SetValue(bool(o.get("html_copy", False)))
-        self.describe_cb.SetValue(bool(o.get("describe_images", True)))
+        self.pdf_options = merged_options(opts, self._lang_code())
+        self.describe_cb.SetValue(bool(self.pdf_options.get("describe_images", True)))
 
     # ---------------------------------------------------------------- convert
-    @staticmethod
-    def _safe_output_path(in_path: Path, out_dir: Path) -> Path:
-        """Return <stem>.md in out_dir, adding _1, _2 ... instead of overwriting."""
-        candidate = out_dir / (in_path.stem + ".md")
-        n = 1
-        while candidate.exists():
-            candidate = out_dir / f"{in_path.stem}_{n}.md"
-            n += 1
-        return candidate
-
     def _error(self, title: str, message: str) -> None:
         self._set_status(f"{title}.", announce=False)
         wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, self)
@@ -1195,67 +1237,131 @@ class PdfMdFrame(wx.Frame):
             wx.MessageBox("The password is incorrect. Please try again.", "Incorrect Password",
                           wx.OK | wx.ICON_ERROR, self)
 
+    def _confirm_replace(self, path: Path) -> bool:
+        if not path.exists():
+            return True
+        if wx.MessageBox(f"{path.name} already exists. Replace it?", "Replace Output File?",
+                         wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) == wx.YES:
+            return True
+        self._set_status("Conversion not started.", interrupt=True)
+        return False
+
+    def _plan_jobs(self) -> Optional[List[dict]]:
+        """Turn the list into conversion jobs, asking where needed. None cancels."""
+        fmt = self.target_format
+        ext = self._target_ext()
+        recursive = self.subdirs_cb.GetValue()
+        types = ps.parse_type_filter(self.types_text.GetValue())
+        outp = self.out_text.GetValue().strip()
+        plan_fmt = fmt or "markdown"
+
+        for p in self._input_paths:
+            if not Path(p).exists():
+                self._error("Input Not Found", f"This file or folder no longer exists:\n{p}")
+                return None
+
+        if self.join_cb.GetValue() and fmt:
+            sources = [j.source for j in ps.plan_batch(self._input_paths, plan_fmt, "",
+                                                       recursive, types, log_cb=self._log)]
+            if not sources:
+                return []
+            out = Path(outp) if outp else self._joined_name()
+            if out.is_dir() or outp.endswith(("\\", "/")):
+                out = out / self._joined_name().name
+            if not out.suffix:
+                out = out.with_suffix(ext)
+            if any(out == s for s in sources):
+                self._error("Output Would Replace an Input",
+                            f"{out.name} is one of the files to convert. Choose another name.")
+                return None
+            if not self._confirm_replace(out):
+                return None
+            out.parent.mkdir(parents=True, exist_ok=True)
+            self.out_text.ChangeValue(os_display_path(out))
+            return [{"kind": "join", "sources": sources, "dest": out}]
+
+        if self._single_output():
+            src = Path(self._input_paths[0])
+            out = Path(outp) if outp else src.with_suffix(ext)
+            if out.is_dir() or outp.endswith(("\\", "/")):
+                out = out / (src.stem + ext)
+            if out == src:
+                self._error("Output Would Replace the Input",
+                            f"{src.name} is already in this format. Choose another output name "
+                            "or format.")
+                return None
+            if not self._confirm_replace(out):
+                return None
+            out.parent.mkdir(parents=True, exist_ok=True)
+            self.out_text.ChangeValue(os_display_path(out))
+            pairs = [(src, out)]
+        else:
+            out_dir = Path(outp) if outp else None
+            if out_dir is not None and out_dir.exists() and not out_dir.is_dir():
+                self._error("Output Must Be a Folder",
+                            "When converting several files, the output must be a folder, or "
+                            "empty to save each file next to its original.")
+                self.out_text.SetFocus()
+                return None
+            if out_dir is not None:
+                out_dir.mkdir(parents=True, exist_ok=True)
+            pairs = [(j.source, j.dest) for j in ps.plan_batch(
+                self._input_paths, plan_fmt, out_dir or "", recursive, types, log_cb=self._log)]
+
+        jobs = []
+        for src, dest in pairs:
+            is_pdf = src.suffix.lower() == ".pdf"
+            if not fmt:
+                kind = "pdfmd" if is_pdf else "pandoc"
+            else:
+                kind = "pdf_pandoc" if is_pdf else "pandoc"
+            jobs.append({"kind": kind, "sources": [src], "dest": dest})
+        return jobs
+
     def _on_convert(self) -> None:
         if self._busy():
             self._set_status("A conversion is already running. Press Escape to stop it.", interrupt=True)
             return
-
-        inputs = [Path(p) for p in self._input_paths]
-        if not inputs:
-            wx.MessageBox("Add one or more PDF files first. Press Ctrl+O to choose files.",
+        if not self._input_paths:
+            wx.MessageBox("Add one or more files first. Press Ctrl+O to choose files, or "
+                          "Ctrl+Shift+A to choose a folder.",
                           "No Input Files", wx.OK | wx.ICON_WARNING, self)
             self.add_btn.SetFocus()
             return
 
-        for in_path in inputs:
-            if not in_path.is_file():
-                self._error("Input Not Found", f"This file no longer exists:\n{in_path}")
-                return
-            if in_path.suffix.lower() != ".pdf":
-                self._error("Input Is Not a PDF", f"This file is not a PDF:\n{in_path}")
-                return
-
-        outp = self.out_text.GetValue().strip()
-        jobs: List[Tuple[Path, Path]] = []
         try:
-            if len(inputs) > 1:
-                out_dir = Path(outp) if outp else inputs[0].parent
-                if out_dir.exists() and not out_dir.is_dir():
-                    self._error("Output Must Be a Folder",
-                                "When converting several files, the output must be a folder.")
-                    self.out_text.SetFocus()
-                    return
-                out_dir.mkdir(parents=True, exist_ok=True)
-                self.out_text.ChangeValue(os_display_path(out_dir))
-                for inp in inputs:
-                    jobs.append((inp, self._safe_output_path(inp, out_dir)))
-            else:
-                in_path = inputs[0]
-                out_path = Path(outp) if outp else in_path.with_suffix(".md")
-                if out_path.is_dir() or outp.endswith(("\\", "/")):
-                    out_path = out_path / (in_path.stem + ".md")
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                if out_path.exists():
-                    if wx.MessageBox(f"{out_path.name} already exists. Replace it?",
-                                     "Replace Output File?",
-                                     wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
-                        self._set_status("Conversion not started.", interrupt=True)
-                        return
-                self.out_text.ChangeValue(os_display_path(out_path))
-                jobs.append((in_path, out_path))
+            jobs = self._plan_jobs()
         except OSError as e:
             self._error("Cannot Use Output Location", f"The output location cannot be used:\n{e}")
             return
+        if jobs is None:
+            return
+        if not jobs:
+            self._set_status("Nothing to convert: the folders have no documents of the chosen "
+                             "types, or every file is already in the output format.",
+                             interrupt=True)
+            return
 
+        needs_pandoc = any(j["kind"] != "pdfmd" for j in jobs)
+        if needs_pandoc and not ps.find_pandoc():
+            if wx.MessageBox("Converting these files needs pandoc, which is not installed. "
+                             "Open Pandoc Options to install it?", "Pandoc Needed",
+                             wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION, self) == wx.YES:
+                self._open_pandoc()
+            if not ps.find_pandoc():
+                self._set_status("Conversion not started: pandoc is not installed.", interrupt=True)
+                return
+
+        pdfs = [s for j in jobs for s in j["sources"] if s.suffix.lower() == ".pdf"]
         # Scanned PDFs need Tesseract: offer to install it instead of
         # silently producing an empty document.
-        if not self._check_ocr_ready([inp for inp, _ in jobs]):
+        if pdfs and not self._check_ocr_ready(pdfs):
             return
 
         # Ask for passwords up front, on the GUI thread.
         passwords: Dict[str, Optional[str]] = {}
         if fitz is not None:
-            for inp, _ in jobs:
+            for inp in pdfs:
                 try:
                     doc = fitz.open(str(inp))
                     needs = bool(getattr(doc, "needs_pass", False))
@@ -1272,9 +1378,13 @@ class PdfMdFrame(wx.Frame):
 
         o = self._options_from_controls()
         opts = self._engine_options(o)
+        popts = copy.deepcopy(self.pandoc_opts)
+        popts.to_format = self.target_format or "markdown"
+        vs = vision.VisionSettings(enabled=self.describe_cb.GetValue(),
+                                   device=self.vision_settings.device,
+                                   model_id=self.vision_settings.model_id, lang=o["ocr_lang"])
 
         self._cancel.clear()
-        self._last_pandoc_path = None
         self._last_output_path = None
         self._last_html_path = None
         self._last_announced_pct = 0
@@ -1282,12 +1392,19 @@ class PdfMdFrame(wx.Frame):
         self.gauge.SetValue(0)
         self._save_config()
 
-        n = len(jobs)
-        self._set_status(f"Converting {n} files..." if n > 1 else f"Converting {jobs[0][0].name}...",
-                         interrupt=True)
+        n = sum(len(j["sources"]) for j in jobs)
+        what = ps.format_label(self.target_format) if self.target_format else "Markdown"
+        if jobs[0]["kind"] == "join":
+            msg = f"Joining {n} files into one {what} document..."
+        elif n > 1:
+            msg = f"Converting {n} files to {what}..."
+        else:
+            msg = f"Converting {jobs[0]['sources'][0].name} to {what}..."
+        self._set_status(msg, interrupt=True)
         self._worker = threading.Thread(
             target=self._run_pipeline,
-            args=(jobs, opts, passwords, o["math_mode"], o["html_copy"]),
+            args=(jobs, opts, popts, vs, passwords, o["math_mode"], o["html_copy"],
+                  self.keep_md_cb.GetValue()),
             daemon=True,
         )
         self._worker.start()
@@ -1368,30 +1485,48 @@ class PdfMdFrame(wx.Frame):
             self._last_html_path = str(html_path)
             self._log(f"Accessible HTML: {os_display_path(html_path)}")
 
-    def _run_pipeline(self, jobs: List[Tuple[Path, Path]], opts: Options,
+    @staticmethod
+    def _unique(path: Path) -> Path:
+        candidate, n = path, 1
+        while candidate.exists():
+            candidate = path.with_name(f"{path.stem}_{n}{path.suffix}")
+            n += 1
+        return candidate
+
+    def _pdf_to_md(self, src: Path, md: Path, opts: Options, passwords: Dict[str, Optional[str]],
+                   progress, log_cb) -> None:
+        self._log(f"Reading {src.name} with pdfmd (OCR mode: {opts.ocr_mode})...")
+        pdf_to_markdown(str(src), str(md), opts, progress_cb=progress, log_cb=log_cb,
+                        pdf_password=passwords.get(str(src)))
+
+    def _run_pipeline(self, jobs: List[dict], opts: Options, popts: "ps.PandocOptions", vs,
                       passwords: Dict[str, Optional[str]], math_mode: str,
-                      html_copy: bool) -> None:
+                      html_copy: bool, keep_md: bool) -> None:
         total_jobs = len(jobs)
         successes = 0
         failures: List[str] = []
         batch_answer: Dict[str, Optional[bool]] = {"value": None}
         final_status = ""
         error_dialog: Optional[Tuple[str, str]] = None
+        pandoc = ps.find_pandoc()
+        binary_out = popts.to_format in ps.BINARY_OUTPUTS
 
         vision.hold()
         try:
-            for job_idx, (inp, outp) in enumerate(jobs):
+            for job_idx, job in enumerate(jobs):
                 if self._cancel.is_set():
                     raise UserCancelled()
+                kind, sources, outp = job["kind"], job["sources"], job["dest"]
+                name = sources[0].name if len(sources) == 1 else f"{len(sources)} files"
 
                 if total_jobs > 1:
                     self._log("")
-                    self._log(f"[{job_idx + 1} of {total_jobs}] {inp.name}")
+                    self._log(f"[{job_idx + 1} of {total_jobs}] {name}")
                     wx.CallAfter(self._set_status,
-                                 f"File {job_idx + 1} of {total_jobs}: {inp.name}", False)
-                self._log(f"Input:  {os_display_path(inp)}")
+                                 f"File {job_idx + 1} of {total_jobs}: {name}", False)
+                if len(sources) == 1:
+                    self._log(f"Input:  {os_display_path(sources[0])}")
                 self._log(f"Output: {os_display_path(outp)}")
-                self._log(f"OCR mode: {opts.ocr_mode}")
 
                 def progress(done: int, total: int, idx=job_idx) -> None:
                     if self._cancel.is_set():
@@ -1406,32 +1541,66 @@ class PdfMdFrame(wx.Frame):
                     self._log(msg)
 
                 try:
-                    pdf_to_markdown(str(inp), str(outp), opts, progress_cb=progress,
-                                    log_cb=log_cb, pdf_password=passwords.get(str(inp)))
+                    with tempfile.TemporaryDirectory(prefix="pdfmd-") as tmp:
+                        if kind == "pdfmd":
+                            self._pdf_to_md(sources[0], outp, opts, passwords, progress, log_cb)
+                        elif kind == "pandoc":
+                            ps.convert(sources[0], outp, popts, ocr_lang=opts.ocr_lang,
+                                       log_cb=log_cb, pandoc=pandoc, vision=vs)
+                        else:
+                            # PDFs become Markdown first: kept next to the output when
+                            # asked (or when exported images must stay linked from a
+                            # text format), otherwise in a temporary folder.
+                            inputs: List[Path] = []
+                            for src in sources:
+                                if src.suffix.lower() != ".pdf":
+                                    inputs.append(src)
+                                    continue
+                                if keep_md or (opts.export_images and not binary_out):
+                                    md = self._unique(outp.parent / (src.stem + ".md"))
+                                else:
+                                    md = Path(tmp) / f"{len(inputs) + 1}_{src.stem}.md"
+                                self._pdf_to_md(src, md, opts, passwords, progress, log_cb)
+                                if keep_md:
+                                    self._log(f"Markdown kept: {os_display_path(md)}")
+                                inputs.append(md)
+                            wx.CallAfter(self._set_status,
+                                         f"Converting to {ps.format_label(popts.to_format)}...",
+                                         False)
+                            if kind == "join":
+                                ps.join_convert(inputs, outp, popts, ocr_lang=opts.ocr_lang,
+                                                log_cb=log_cb, pandoc=pandoc, vision=vs)
+                            else:
+                                ps.convert(inputs[0], outp, popts, ocr_lang=opts.ocr_lang,
+                                           log_cb=log_cb, pandoc=pandoc, vision=vs)
+                            for md in inputs:
+                                if md.suffix == ".md" and md.parent == outp.parent and not keep_md \
+                                        and md not in sources:
+                                    md.unlink(missing_ok=True)   # assets folder stays linked
                     successes += 1
                     self._last_output_path = str(outp)
-                    self._postprocess_math(outp, opts, math_mode, html_copy, batch_answer,
-                                           remaining=total_jobs - job_idx - 1)
-                    if self.pandoc_auto:
-                        self._pandoc_export(outp, opts.ocr_lang, opts.describe_images)
+                    if outp.suffix.lower() in (".html", ".htm"):
+                        self._last_html_path = str(outp)
+                    if outp.suffix.lower() == ".md":
+                        self._postprocess_math(outp, opts, math_mode, html_copy, batch_answer,
+                                               remaining=total_jobs - job_idx - 1)
+                    wx.CallAfter(self._on_progress, int((job_idx + 1) * 100 / total_jobs))
                 except UserCancelled:
                     raise
                 except Exception as e:
-                    failures.append(inp.name)
-                    self._log(f"Error converting {inp.name}: {e}")
+                    failures.append(name)
+                    self._log(f"Error converting {name}: {e}")
                     if total_jobs == 1:
                         error_dialog = ("Conversion Failed",
-                                        f"{inp.name} could not be converted:\n\n{e}")
+                                        f"{name} could not be converted:\n\n{e}")
 
             if total_jobs == 1:
                 if failures:
                     final_status = "Conversion failed. See the conversion log for details."
                 else:
-                    final_status = f"Conversion complete. Saved {jobs[0][1].name}."
-                    if self._last_html_path:
+                    final_status = f"Conversion complete. Saved {jobs[0]['dest'].name}."
+                    if self._last_html_path and jobs[0]["dest"].suffix.lower() == ".md":
                         final_status += " An accessible HTML copy was saved too."
-                    if self._last_pandoc_path:
-                        final_status += f" Pandoc export saved {Path(self._last_pandoc_path).name}."
             else:
                 final_status = f"Batch complete: {successes} of {total_jobs} converted."
                 if failures:
@@ -1516,66 +1685,48 @@ class PdfMdFrame(wx.Frame):
         )
 
     def _open_pandoc(self) -> None:
-        """Open the pandoc converter, pre-filled with the last converted file."""
+        """Pandoc Options: every pandoc setting for the chosen output format."""
         if self._busy():
             self._set_status("Wait for the current conversion to finish.", interrupt=True)
             return
-        o = self._options_from_controls()
-        engine_opts = self._engine_options(o)
-
-        def pdf_converter(src: Path, dest_md: Path, describe: Optional[bool] = None) -> None:
-            # Runs on the pandoc dialog's worker thread.
-            from dataclasses import replace
-
-            eo = engine_opts if describe is None else replace(engine_opts, describe_images=describe)
-            pdf_to_markdown(str(src), str(dest_md), eo)
-
-        initial: List[str] = []
-        if self._last_output_path and Path(self._last_output_path).is_file():
-            initial.append(self._last_output_path)
-        else:
-            initial.extend(self._input_paths)
-        vs = vision.VisionSettings(enabled=self.pandoc_describe, device=self.vision_settings.device,
-                                   model_id=self.vision_settings.model_id, lang=o["ocr_lang"])
-        dlg = PandocDialog(self, self.pandoc_opts, self.pandoc_auto, initial, o["ocr_lang"],
-                           pdf_converter, announcer=self.announcer, out_dir=self.pandoc_out_dir,
-                           vision_settings=vs, include_subfolders=self.pandoc_subfolders,
-                           folder_types=self.pandoc_folder_types)
-        dlg.ShowModal()
-        self.pandoc_opts = dlg.opts
-        self.pandoc_auto = dlg.auto_export
-        self.pandoc_out_dir = dlg.out_dir_value
-        self.pandoc_describe = dlg.describe_images
-        self.pandoc_subfolders = dlg.include_subfolders
-        self.pandoc_folder_types = dlg.folder_types
+        if self.target_format:
+            self.pandoc_opts.to_format = self.target_format
+        before = self.pandoc_opts.to_format
+        sample = next((Path(p).name for p in self._input_paths
+                       if Path(p).is_file() and not p.lower().endswith(".pdf")), "")
+        dlg = PandocOptionsDialog(self, self.pandoc_opts, announcer=self.announcer,
+                                  show_advanced=self.pandoc_show_advanced, sample_input=sample)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.pandoc_opts = dlg.opts
+            self.pandoc_show_advanced = dlg.show_advanced
+            # Choosing an output format there converts to it here.
+            if self.pandoc_opts.to_format != before or self.target_format:
+                self._set_target(self.pandoc_opts.to_format)
+                self._update_visibility()
+                self._suggest_output()
+            self._save_config()
+            self._set_status("Pandoc options saved. Converting to "
+                             f"{ps.format_label(self.target_format) if self.target_format else 'Markdown'}.",
+                             interrupt=True)
         dlg.Destroy()
-        self._save_config()
-        if self.pandoc_auto:
-            self._set_status(
-                f"PDF conversions will also be exported to "
-                f"{ps.format_label(self.pandoc_opts.to_format)}.", announce=False)
+        self.out_formats = ps.list_output_formats(ps.find_pandoc())
 
-    def _pandoc_export(self, md_path: Path, ocr_lang: str, describe: bool = True) -> None:
-        """Worker thread: export a converted Markdown file with pandoc."""
-        pandoc = ps.find_pandoc()
-        if not pandoc:
-            self._log("Pandoc export skipped: pandoc is not installed. "
-                      "Use File > Convert with Pandoc to install it.")
+    def _open_pdf_settings(self) -> None:
+        """PDF Settings: how PDFs are read."""
+        if self._busy():
+            self._set_status("Wait for the current conversion to finish.", interrupt=True)
             return
-        o = self.pandoc_opts
-        dest_dir = Path(self.pandoc_out_dir) if self.pandoc_out_dir else md_path.parent
-        dest = dest_dir / (md_path.stem + ps.output_extension(o.to_format))
-        if dest == md_path:
-            dest = dest_dir / (md_path.stem + "_pandoc" + ps.output_extension(o.to_format))
-        try:
-            vs = vision.VisionSettings(enabled=describe, device=self.vision_settings.device,
-                                       model_id=self.vision_settings.model_id, lang=ocr_lang)
-            ps.convert(md_path, dest, o, ocr_lang=ocr_lang, log_cb=self._log, pandoc=pandoc,
-                       vision=vs)
-            self._last_pandoc_path = str(dest)
-            self._log(f"Pandoc export: {os_display_path(dest)}")
-        except Exception as e:  # noqa: BLE001
-            self._log(f"Pandoc export failed for {md_path.name}: {e}")
+        dlg = PdfSettingsDialog(self, self._options_from_controls(), self._profile_names(),
+                                self.current_profile, self._profile_options,
+                                announcer=self.announcer)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.pdf_options = {**dlg.options, "describe_images": self.describe_cb.GetValue()}
+            if dlg.profile != self.current_profile:
+                self.current_profile = dlg.profile
+                self._refresh_profiles()
+            self._save_config()
+            self._set_status("PDF settings saved.", interrupt=True)
+        dlg.Destroy()
 
     # -------------------------------------------------------------- tesseract
     def _open_tesseract(self, check_now: bool = False) -> None:
@@ -1641,7 +1792,9 @@ class PdfMdFrame(wx.Frame):
 
     def _check_ocr_ready(self, inputs: List[Path]) -> bool:
         """Return False to cancel the conversion."""
-        mode = OCR_CODES[max(0, self.ocr_choice.GetSelection())]
+        mode = str(self.pdf_options.get("ocr_mode", "auto"))
+        if mode not in OCR_CODES:
+            mode = "auto"
         if mode == "off" or ts.configure():
             return True
         scanned: List[str] = []
@@ -1812,7 +1965,7 @@ class PdfMdApp(wx.App):
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    files = [a for a in args if a.lower().endswith(".pdf") and Path(a).is_file()]
+    files = [a for a in args if Path(a).exists()]
     app = PdfMdApp(files)
     app.MainLoop()
     return 0
