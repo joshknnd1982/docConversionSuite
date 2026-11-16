@@ -254,11 +254,13 @@ Menus
 Convert with Pandoc window (Ctrl+P)
   Ctrl+Tab            Next page of settings
   Ctrl+Shift+Tab      Previous page of settings
-  F5 or Alt+V         Convert
+  F5 or Alt+V         Convert (with an empty list, goes to page 4)
+  Alt+P               Stop a running batch after the current file
   Esc                 Close
-  Page 1, Files and format: Alt+I input files, Alt+A add, Alt+R remove,
-    Alt+F input format, Alt+O output format, Alt+D output folder,
-    Alt+B browse, Alt+X also export PDF conversions, Alt+G pandoc log
+  Pages are in the order you use them: settings first, files last.
+  Page 1, Format and output: Alt+F input format, Alt+O output format,
+    Alt+D output folder, Alt+B browse, Alt+X also export PDF
+    conversions, Alt+C describe pictures
   Page 2, Document options: Alt+S standalone, Alt+C table of contents,
     Alt+N number sections, Alt+E embed resources, Alt+D contents depth,
     Alt+M math rendering, Alt+H highlighting, Alt+W wrapping, Alt+T title,
@@ -268,6 +270,11 @@ Convert with Pandoc window (Ctrl+P)
     Alt+F choose style, Alt+R reference document, Alt+U choose document,
     Alt+T template, Alt+M choose template, Alt+L filters, Alt+E choose
     filter, Alt+N PDF engine, Alt+X extra pandoc arguments
+  Page 4, Files and folders: Alt+I list of files and folders, Alt+A add
+    files, Alt+F add folder, Alt+R remove selected (or Delete), Alt+E
+    clear list, Alt+S include subfolders, Alt+T file types to take from
+    folders, Alt+G pandoc log. Files and folders can also be dropped on
+    the list.
   Alt+P               Install Pandoc (shown when pandoc is missing)
 
 Tesseract OCR window (Ctrl+T)
@@ -381,6 +388,8 @@ class PdfMdFrame(wx.Frame):
         self.pandoc_out_dir = ""
         self._last_pandoc_path: Optional[str] = None
         self.pandoc_describe = True
+        self.pandoc_subfolders = False
+        self.pandoc_folder_types = ""
         self.vision_settings = vision.VisionSettings()
         self.album_folder = ""
         self.album_format = "html"
@@ -773,6 +782,8 @@ class PdfMdFrame(wx.Frame):
             self.pandoc_auto = bool(pandoc.get("auto_export", False))
             self.pandoc_out_dir = str(pandoc.get("out_dir", "") or "")
             self.pandoc_describe = bool(pandoc.get("describe_images", True))
+            self.pandoc_subfolders = bool(pandoc.get("include_subfolders", False))
+            self.pandoc_folder_types = str(pandoc.get("folder_types", "") or "")
 
         vis = data.get("vision")
         if isinstance(vis, dict):
@@ -805,6 +816,8 @@ class PdfMdFrame(wx.Frame):
                 "auto_export": self.pandoc_auto,
                 "out_dir": self.pandoc_out_dir,
                 "describe_images": self.pandoc_describe,
+                "include_subfolders": self.pandoc_subfolders,
+                "folder_types": self.pandoc_folder_types,
             },
             "vision": self.vision_settings.to_dict(),
             "album": {"folder": self.album_folder, "format": self.album_format},
@@ -1526,12 +1539,15 @@ class PdfMdFrame(wx.Frame):
                                    model_id=self.vision_settings.model_id, lang=o["ocr_lang"])
         dlg = PandocDialog(self, self.pandoc_opts, self.pandoc_auto, initial, o["ocr_lang"],
                            pdf_converter, announcer=self.announcer, out_dir=self.pandoc_out_dir,
-                           vision_settings=vs)
+                           vision_settings=vs, include_subfolders=self.pandoc_subfolders,
+                           folder_types=self.pandoc_folder_types)
         dlg.ShowModal()
         self.pandoc_opts = dlg.opts
         self.pandoc_auto = dlg.auto_export
         self.pandoc_out_dir = dlg.out_dir_value
         self.pandoc_describe = dlg.describe_images
+        self.pandoc_subfolders = dlg.include_subfolders
+        self.pandoc_folder_types = dlg.folder_types
         dlg.Destroy()
         self._save_config()
         if self.pandoc_auto:

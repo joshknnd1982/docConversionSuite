@@ -240,13 +240,16 @@ Other features:
 
 ## 7. The pandoc window
 
-Open it with **File > Convert Any Document with Pandoc** (Ctrl+P). It has three pages:
+Open it with **File > Convert Any Document with Pandoc** (Ctrl+P). Its four pages are in the order you use them: choose the settings first, then the files.
 
-1. **Files and format**: input files (any format, including PDF), input format, output format, output folder, the option to also export every PDF conversion from the main window, **Describe pictures with the local AI vision model** (Alt+C), and the pandoc log.
+1. **Format and output**: input format, output format, output folder, the option to also export every PDF conversion from the main window, and **Describe pictures with the local AI vision model** (Alt+C).
 2. **Document options**: standalone, table of contents and depth, section numbering, embedded resources, math rendering, code highlighting, line wrapping, title, language, heading shift.
 3. **Citations, templates and filters**: citeproc, bibliography files, CSL style, reference document, template, filters, PDF engine, extra pandoc arguments.
+4. **Files and folders**: a standard list of the files and folders to convert, **Add Files** (one or many), **Add Folder** (add as many folders as you like), **Remove Selected** (or Delete), **Clear List**, **Include subfolders of added folders**, **File types to take from folders** (for example `docx; md; pdf`; empty means every type pdfmd or pandoc reads), and the pandoc log. Files and folders can also be dropped on the list.
 
-Output files are named after the input with the right extension; existing files are never overwritten (`_1`, `_2` are added). Settings are remembered.
+**Single file or batch.** One file, many files, whole folders or any mix are converted in one batch with the same settings, from any input format (including PDF) to any output format. Pressing Convert with an empty list takes you to the Files and folders page. The status line shows "Converting 3 of 40", long batches announce their progress every quarter, and **Stop** (Alt+P) ends the batch after the current file.
+
+Output files are named after the input with the right extension and saved next to each input, or in the output folder. Files from an added folder keep their subfolder layout inside the output folder. In folders, files already in the output format are skipped (so converting a folder twice doesn't convert the first run's results), as are hidden files, Office lock files (`~$name.docx`) and `_assets` image folders. A file listed on its own and inside a folder is converted once. Existing files are never overwritten and two inputs never share an output name (`_1`, `_2` are added). Settings, including the subfolder and file type choices, are remembered.
 
 ## 7a. The Vision Model window
 

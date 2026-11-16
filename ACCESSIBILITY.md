@@ -134,19 +134,24 @@ Menu bar keys: Alt+F File, Alt+P Profiles, Alt+V View, Alt+H Help. No control us
 
 ### 1.6 Keyboard reference: Convert Any Document with Pandoc window
 
-The window has three pages in a tab control. **Ctrl+Tab** and **Ctrl+Shift+Tab** move between pages; your screen reader announces the page name. The Convert, Install Pandoc and Close buttons are always available.
+The window has four pages in a tab control, in the order you use them: settings first, the files and folders to convert last. **Ctrl+Tab** and **Ctrl+Shift+Tab** move between pages; your screen reader announces the page name. Focus starts on the output format. The Convert, Install Pandoc and Close buttons are always available; Stop appears while a batch runs.
 
 | Key | Action |
 | --- | --- |
-| F5 or Alt+V | Convert |
-| Esc | Close (settings are kept) |
+| F5 or Alt+V | Convert every file and folder in the list (with an empty list, moves to page 4 and the Add Files button) |
+| Alt+P | Stop a running batch after the current file (shown only while converting) |
+| Esc | Close (settings are kept; asks first while a batch runs) |
 | Alt+P | Install Pandoc (shown only when pandoc is missing) |
 
-**Page 1, Files and format:** Alt+I input files, Alt+A add files, Alt+R remove selected, Alt+F input format, Alt+O output format, Alt+D output folder, Alt+B browse, Alt+X also export every PDF conversion in the main window, Alt+G pandoc log.
+**Page 1, Format and output:** Alt+F input format, Alt+O output format, Alt+D output folder, Alt+B browse, Alt+X also export every PDF conversion in the main window, Alt+C describe pictures.
 
 **Page 2, Document options:** Alt+S standalone document, Alt+C table of contents, Alt+N number sections, Alt+E embed images and styles, Alt+D depth of contents, Alt+M math rendering, Alt+H code highlighting style, Alt+W line wrapping, Alt+T document title, Alt+L document language, Alt+G shift heading levels.
 
 **Page 3, Citations, templates and filters:** Alt+C process citations, Alt+B bibliography files, Alt+I choose bibliography, Alt+S citation style, Alt+F choose style file, Alt+R reference document, Alt+U choose document, Alt+T template, Alt+M choose template, Alt+L filters, Alt+E choose filter, Alt+N PDF engine, Alt+X extra pandoc arguments.
+
+**Page 4, Files and folders:** Alt+I list of files and folders, Alt+A add files, Alt+F add folder, Alt+R remove selected (Delete works in the list too), Alt+E clear list, Alt+S include subfolders, Alt+T file types to take from folders, Alt+G pandoc log.
+
+The list is a standard multiple-selection list box. Each folder is read as "Folder *name*, *N* files" (or "with subfolders, *N* files"), so you hear how many files it will contribute; the count updates when you change the subfolder or file type settings. Select a range with Shift+arrows; to pick items that aren't next to each other, press Shift+F8, move with the arrows and press Space on each item (Shift+F8 again ends this mode). Then press Delete. Adding, removing and clearing are announced with the new totals. During a batch the status line at the top of the window reads "Converting *n* of *total*: *file name*", and progress is announced every quarter of a batch of eight files or more.
 
 ### 1.7 Keyboard reference: Tesseract OCR window
 

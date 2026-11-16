@@ -314,6 +314,126 @@ def detect_input_format(path: str | Path) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Batch conversion: files and folders
+# ---------------------------------------------------------------------------
+
+
+def supported_input_extensions() -> List[str]:
+    """Extensions taken from folders by default: PDF and everything pandoc reads."""
+    return sorted(set(INPUT_EXTENSIONS) | {".pdf"})
+
+
+def parse_type_filter(text: str) -> Optional[set]:
+    """Turn "docx; *.md, .html" into {".docx", ".md", ".html"}. Empty means all."""
+    exts = set()
+    for part in re.split(r"[;,\s]+", text or ""):
+        part = part.strip().lower().lstrip("*")
+        if not part or part == ".":
+            continue
+        exts.add(part if part.startswith(".") else "." + part)
+    return exts or None
+
+
+def _skip_name(name: str) -> bool:
+    # Hidden files, Office lock files (~$report.docx) and editor backups.
+    return name.startswith((".", "~$")) or name.endswith("~")
+
+
+def folder_files(folder: str | Path, recursive: bool = False,
+                 types: Optional[set] = None) -> List[Path]:
+    """Files in ``folder`` that can be converted, sorted, optionally with subfolders.
+
+    ``types`` is a set of extensions such as {".docx", ".md"}; None means
+    every supported input. Hidden files and folders, Office lock files and
+    pdfmd's ``_assets`` image folders are skipped.
+    """
+    folder = Path(folder)
+    wanted = types if types is not None else set(supported_input_extensions())
+    found: List[Path] = []
+    if not folder.is_dir():
+        return found
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs
+                         if recursive and not d.startswith(".") and not d.endswith("_assets"))
+        for name in sorted(files, key=str.lower):
+            if _skip_name(name):
+                continue
+            p = Path(root) / name
+            if p.suffix.lower() in wanted:
+                found.append(p)
+    return found
+
+
+@dataclass
+class BatchJob:
+    source: Path
+    dest: Path
+
+
+def plan_batch(items: Sequence[str | Path], to_format: str, out_dir: str | Path = "",
+               recursive: bool = False, types: Optional[set] = None,
+               log_cb: Logger = None) -> List[BatchJob]:
+    """Turn a list of files and folders into (source, destination) pairs.
+
+    * A file is converted whatever its type.
+    * A folder contributes every supported file in it (and its subfolders when
+      ``recursive``), limited to ``types`` when given. Files already in the
+      output format are skipped, so converting a folder twice doesn't convert
+      the first run's results.
+    * Without ``out_dir`` each output is saved next to its input. With it,
+      files from a folder keep their subfolder layout under ``out_dir``.
+    * A file listed twice (on its own and inside a folder) is converted once.
+    * Existing files are never overwritten, and two inputs never share an
+      output name (``_1``, ``_2`` are added).
+    """
+    ext = output_extension(to_format)
+    out = Path(out_dir) if out_dir else None
+    jobs: List[BatchJob] = []
+    seen: set = set()
+    claimed: set = set()
+
+    def key(p: Path) -> str:
+        try:
+            return os.path.normcase(str(p.resolve()))
+        except OSError:
+            return os.path.normcase(str(p.absolute()))
+
+    def add(src: Path, rel_dir: Optional[Path]) -> None:
+        k = key(src)
+        if k in seen:
+            return
+        seen.add(k)
+        if out is None:
+            dest_dir = src.parent
+        else:
+            dest_dir = out / rel_dir if rel_dir is not None else out
+        dest = dest_dir / (src.stem + ext)
+        n = 1
+        while dest.exists() or key(dest) == k or key(dest) in claimed:
+            dest = dest_dir / f"{src.stem}_{n}{ext}"
+            n += 1
+        claimed.add(key(dest))
+        jobs.append(BatchJob(src, dest))
+
+    for item in items:
+        p = Path(item)
+        if p.is_dir():
+            files = folder_files(p, recursive, types)
+            skipped = [f for f in files if f.suffix.lower() == ext.lower()]
+            if skipped and log_cb:
+                log_cb(f"Skipped {len(skipped)} file{'s' if len(skipped) != 1 else ''} in "
+                       f"{p.name} already in the output format ({ext}).")
+            for f in files:
+                if f.suffix.lower() != ext.lower():
+                    add(f, f.parent.relative_to(p))
+        elif p.is_file():
+            add(p, None)
+        elif log_cb:
+            log_cb(f"Not found, skipped: {p}")
+    return jobs
+
+
+# ---------------------------------------------------------------------------
 # Conversion
 # ---------------------------------------------------------------------------
 
