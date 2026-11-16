@@ -27,6 +27,9 @@ from .pipeline import pdf_to_markdown
 
 __all__ = ["Options", "pdf_to_markdown", "__version__"]
 
+# v1.9.0: one main window for every input and output format; every pandoc
+#          option in Pandoc Options (built from pandoc_options.OPTIONS);
+#          PDF Settings window; join files; clearer controls.
 # v1.8.0: picture descriptions by a local AI vision model (llama.cpp +
 #          Qwen3-VL 2B abliterated, GPU or CPU) for PDFs and every pandoc
 #          input format; describe a folder of photos into an album.
@@ -36,7 +39,7 @@ __all__ = ["Options", "pdf_to_markdown", "__version__"]
 #          integration, Windows installer.
 # v1.6.0: OCR language selection, multi-file batch GUI, GUI redesign,
 #          colorspace fix for image export, init-order crash fix.
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 
 def main() -> None:

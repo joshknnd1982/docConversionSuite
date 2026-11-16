@@ -2,7 +2,7 @@
 
 Document Conversion Suite is an accessible, privacy-first document converter for Windows. It turns PDFs (including scanned PDFs) into clean Markdown with the pdfmd engine, makes math accessible with MathJax, writes accessible HTML, and converts between every format pandoc supports, with all of pandoc's options available.
 
-Version 1.7.1. For accessibility details and the full keyboard reference, see [ACCESSIBILITY.md](ACCESSIBILITY.md).
+Version 1.9.0. For accessibility details and the full keyboard reference, see [ACCESSIBILITY.md](ACCESSIBILITY.md).
 
 ## Contents
 
@@ -12,7 +12,7 @@ Version 1.7.1. For accessibility details and the full keyboard reference, see [A
 4. [Accessible HTML output](#4-accessible-html-output)
 5. [Pandoc: every format, every option](#5-pandoc-every-format-every-option)
 6. [The main window](#6-the-main-window)
-7. [The pandoc window](#7-the-pandoc-window)
+7. [The Pandoc Options and PDF Settings windows](#7-the-pandoc-options-and-pdf-settings-windows)
 8. [Profiles and settings](#8-profiles-and-settings)
 9. [Command line (pdfmd-cli)](#9-command-line-pdfmd-cli)
 10. [Python API](#10-python-api)
@@ -34,9 +34,10 @@ Version 1.7.1. For accessibility details and the full keyboard reference, see [A
 | Accessible HTML | Language-tagged, structured HTML copy with MathJax math |
 | Picture descriptions | A local AI vision model (Qwen3-VL 2B, abliterated, in llama.cpp) describes photos, charts, graphs, maps and diagrams in PDFs and every pandoc input format: alternative text, or a block quote for text-only output; GPU or CPU; describe whole photo folders into an album |
 | Pandoc | Convert from about 50 input formats to about 70 output formats: Word, EPUB, HTML, LaTeX, PDF, ODT, PowerPoint, reStructuredText, AsciiDoc, Typst, JATS, DocBook and more |
-| Pandoc options | Standalone, table of contents, numbering, math rendering, highlighting, wrapping, title, language, heading shift, citations (citeproc, bibliographies, CSL), reference documents, templates, Lua filters, PDF engines, and any other pandoc argument |
+| Pandoc options | Every option of pandoc 3.13 has its own labelled control: format extensions, metadata, variables, table of contents, lists of figures and tables, numbering, captions, math, highlighting, citations (citeproc, natbib, biblatex), wrapping, line endings, reference documents, templates, EPUB covers and fonts, slides, PDF engines, filters, includes, sandbox and more. Only the options for the chosen format are shown |
 | Accessible GUI | Native controls, labels, spoken descriptions, Tab order, menu bar, Alt keys, screen reader announcements |
-| Batch | Convert many files at once, with safe output naming |
+| One window | Add any documents or folders, choose what to convert them to, press F5. Join many files of different formats into one document |
+| Batch | Convert many files and whole folders at once, with safe output naming |
 | Privacy | Everything runs on your computer |
 
 ## 2. PDF conversion engine
@@ -179,32 +180,29 @@ The format lists come from the installed pandoc (`pandoc --list-input-formats` a
 
 **Output formats include:** HTML (4 and 5), Word (.docx), OpenDocument (.odt and flat XML), EPUB (2 and 3), PowerPoint (.pptx), RTF, PDF (through a LaTeX, Typst, ConTeXt or HTML-to-PDF engine), LaTeX, Beamer slides, ConTeXt, Typst, all Markdown flavours, Djot, plain text, reStructuredText, AsciiDoc, Org mode, MediaWiki, DokuWiki, Textile, Jira, XWiki, ZimWiki, Vimwiki, Vim help, reveal.js, Slidy, Slideous, S5 and DZSlides slide shows, chunked HTML, JATS (all variants), DocBook 4 and 5, TEI, InDesign ICML, FictionBook, OPML, Jupyter notebooks, man, ms, Texinfo, Haddock, Muse, Markua, BibTeX, BibLaTeX, CSL JSON, ANSI terminal text, and pandoc's JSON, native and XML formats.
 
-### Options in the pandoc window
+### Every pandoc option
 
-| Option | Pandoc equivalent |
+Every option in `pandoc --help` (pandoc 3.13) is described once in `pdfmd/pandoc_options.py`, and each one gets a labelled control in the **Pandoc Options** window (Ctrl+P), a place in saved settings, and a `--pandoc-option` name on the command line. The window has these pages:
+
+| Page | Options (pandoc flags) |
 | --- | --- |
-| Input format (or detect from extension) | `--from` |
-| Output format | `--to` |
-| Standalone document | `--standalone` |
-| Table of contents, depth | `--toc`, `--toc-depth` |
-| Number sections | `--number-sections` |
-| Embed images and styles in one HTML file | `--embed-resources` |
-| Math rendering: Automatic, MathJax, MathML, KaTeX, WebTeX, GladTeX, plain text | `--mathjax`, `--mathml`, `--katex`, `--webtex`, `--gladtex` |
-| Code highlighting style (from your pandoc's styles) | `--highlight-style` |
-| Line wrapping: automatic, none, preserve | `--wrap` |
-| Document title | `--metadata title=...` |
-| Document language | `--metadata lang=...` |
-| Shift heading levels | `--shift-heading-level-by` |
-| Process citations | `--citeproc` |
-| Bibliography files (several allowed) | `--bibliography` |
-| Citation style (CSL) | `--csl` |
-| Reference document (Word, ODT, PowerPoint styles) | `--reference-doc` |
-| Template | `--template` |
-| Lua filters or filter programs (several allowed) | `--lua-filter`, `--filter` |
-| PDF engine (pdflatex, xelatex, lualatex, tectonic, latexmk, typst, context, wkhtmltopdf, weasyprint, pagedjs-cli, prince, groff, pdfroff) | `--pdf-engine` |
-| Extra pandoc arguments | Anything else, typed as on the command line, for example `--columns=100 -V geometry:margin=1in --metadata author="Ada Lovelace"` |
+| Format | Output and input format (`--to`, `--from`), output and input **format extensions** (`+ext`/`-ext`, from `--list-extensions`), standalone (`--standalone`), template (`--template`) with **Save Default Template**, data folder (`--data-dir`), defaults file (`--defaults`) |
+| Document | Title and language (`--metadata`), metadata (`--metadata`), metadata file (`--metadata-file`), template variables (`--variable`, `--variable-json`), include in header / before body / after body (`--include-in-header`, `--include-before-body`, `--include-after-body`) |
+| Contents and sections | Table of contents and depth (`--toc`, `--toc-depth`), lists of figures and tables (`--lof`, `--lot`), number sections (`--number-sections`, `--number-offset`), top-level division (`--top-level-division`), shift heading levels (`--shift-heading-level-by`), figure and table caption position (`--figure-caption-position`, `--table-caption-position`) |
+| Math and code | Math rendering (`--math-method`: automatic, MathJax, MathML, KaTeX, WebTeX, GladTeX, plain), code highlighting (`--syntax-highlighting`) with **Save Highlight Style**, syntax definitions (`--syntax-definition`), LaTeX listings (`--listings`), indented code classes (`--indented-code-classes`), tab stop (`--tab-stop`), preserve tabs (`--preserve-tabs`) |
+| Citations | How citations are handled: leave as written, citeproc, natbib or biblatex (`--citeproc`, `--natbib`, `--biblatex`), bibliography files (`--bibliography`), citation style (`--csl`), journal abbreviations (`--citation-abbreviations`) |
+| Text layout | Wrapping (`--wrap`), line width (`--columns`), line endings (`--eol`), picture resolution (`--dpi`), reference links and their location (`--reference-links`, `--reference-location`), Markdown heading style (`--markdown-headings`), list tables (`--list-tables`), ASCII only (`--ascii`), strip comments (`--strip-comments`) |
+| Web pages and slides | Embed resources (`--embed-resources`), CSS (`--css`), section divs (`--section-divs`), e-mail obfuscation (`--email-obfuscation`), id prefix (`--id-prefix`), title prefix (`--title-prefix`), q tags (`--html-q-tags`), incremental lists (`--incremental`), slide level (`--slide-level`) |
+| Word, OpenDocument, PowerPoint | Reference document (`--reference-doc`) with **Save Default Reference Document**, link images (`--link-images`), tracked changes (`--track-changes`) |
+| E-books | Cover picture (`--epub-cover-image`), title page (`--epub-title-page`), EPUB metadata (`--epub-metadata`), embedded fonts (`--epub-embed-font`), split level (`--split-level`), chunk template (`--chunk-template`), EPUB subfolder (`--epub-subdirectory`) |
+| PDF | PDF engine (`--pdf-engine`: pdflatex, xelatex, lualatex, tectonic, latexmk, typst, context, wkhtmltopdf, weasyprint, pagedjs-cli, prince, groff, pdfroff), engine options (`--pdf-engine-opt`), Typst inputs (`--typst-input`) |
+| Input and media | Extract media (`--extract-media`), resource path (`--resource-path`), default image extension (`--default-image-extension`), abbreviations (`--abbreviations`), file scope (`--file-scope`), notebook output (`--ipynb-output`), request headers (`--request-header`), skip certificate check (`--no-check-certificate`), sandbox (`--sandbox`) |
+| Filters | An ordered list of Lua filters and filter programs (`--lua-filter`, `--filter`) with Add, Remove, Move Up and Move Down |
+| Command line | Extra pandoc arguments, verbose, quiet, fail if warnings, trace, log file (`--verbose`, `--quiet`, `--fail-if-warnings`, `--trace`, `--log`), and the read-only **Command that will run** |
 
-The **Extra pandoc arguments** field gives access to every pandoc option, including ones added in future pandoc versions.
+* **Only what matters is shown.** Options that do nothing for the chosen output format are hidden, and pages with nothing to show are left out (Word output has no e-book or slide page). Rarely used options appear with **Show advanced options**.
+* **Works with any pandoc version.** The window reads `pandoc --help` and hides options your pandoc doesn't have; newer flags (`--syntax-highlighting`, `--math-method`) are used when available and the older ones otherwise.
+* **Extra pandoc arguments** stays as an expert fallback for anything typed by hand.
 
 ### Accessible defaults
 
@@ -220,36 +218,41 @@ The **Extra pandoc arguments** field gives access to every pandoc option, includ
 
 ## 6. The main window
 
+One window converts everything: add documents or folders, choose what to convert them to, choose where to save, press **Convert** (F5).
+
 | Group | Controls |
 | --- | --- |
-| Input and output | Input PDF files list, Add PDFs, Remove Selected, Empty List, Output file or folder, Browse Output |
-| Conversion options | Profile, OCR mode, OCR language, Export images, Insert page breaks, Preview first 3 pages only, Remove repeating header and footer text, Promote uppercase lines to headings, Join short orphan lines into paragraphs, Describe pictures with the local AI vision model, Heading size ratio, Orphan line width, When equations are found, Also save an accessible HTML copy |
-| Progress | Convert, Stop, Open Output Folder, progress bar, Conversion log |
+| Files to convert | Input files and folders list, Add Files, Add Folder, Remove Selected Files, Clear List, Include subfolders of added folders, File types to take from folders |
+| Convert to | Convert to (Markdown and every pandoc output format), Join all files into one document, Keep the Markdown file too, Describe pictures with the local AI vision model, PDF Settings, Pandoc Options |
+| Save to | Output file or folder, Choose Output |
+| Progress | Convert, Stop, Show Output Folder, progress bar, Conversion log |
+
+How each file is converted:
+
+* **PDF to Markdown**: the pdfmd engine, with OCR, tables, math and the MathJax offer, exactly as before.
+* **PDF to any other format**: pdfmd makes accessible Markdown, then pandoc converts it with your Pandoc Options. Check **Keep the Markdown file too** to keep that Markdown next to the output.
+* **Any other document**: pandoc converts it directly, to Markdown or any other format.
+* **Join all files into one document**: every file in the list (in list order, of any formats, PDFs included) becomes one document. Repeated heading ids are numbered so links stay unambiguous.
 
 Other features:
 
-* **Menus**: File (add files, choose output, convert, stop, convert with pandoc, Tesseract OCR, vision model, describe a folder of photos, open folder, open Markdown, open HTML, exit), Profiles (apply, save, delete, reset), View (theme, announcements, speak status), Help (keyboard shortcuts, check for Tesseract updates, check for vision model updates, about).
-* **Drag and drop** PDFs onto the window or the list.
-* **Open PDFs from Explorer** with "Convert with Document Conversion Suite", or pass PDF paths on the command line of `DocConversionSuite.exe`.
-* **Automatic output name**: one PDF goes to `<name>.md` next to it; several go to the first PDF's folder. Type or browse to change it.
+* **Only useful controls are shown**: folder settings appear when the list has a folder; Join and Keep the Markdown file appear when they apply.
+* **Menus**: File (add files, add folder, choose output, convert, stop, PDF Settings, Pandoc Options, Tesseract OCR, vision model, describe a folder of photos, show output folder, open converted file, open HTML, exit), Profiles (apply, save, delete, reset), View (theme, announcements, speak status), Help (keyboard shortcuts, check for Tesseract updates, check for vision model updates, about).
+* **Drag and drop** files and folders onto the window or the list.
+* **Open documents from Explorer** with "Convert with Document Conversion Suite", or pass file and folder paths on the command line of `DocConversionSuite.exe`.
+* **Automatic output name**: one file goes to `<name>.<extension>` next to it; several are saved next to each original, or in the output folder you choose (keeping subfolders). Joined files go to `<first name>_joined.<extension>`.
 * **Overwrite protection**: asks before replacing an existing file; batch output never overwrites.
 * **Stop** a running conversion at any time (Stop button, Shift+F5 or Esc).
-* **Also export with pandoc**: each converted PDF can also be converted automatically to your chosen pandoc format (set in the pandoc window).
 * **Themes**: follow Windows, light or dark (native Windows dark mode).
 * **Status**: spoken announcements, status bar, Ctrl+Shift+S to repeat.
 
-## 7. The pandoc window
+Settings from version 1.8 carry over. If "Also export every PDF conversion" was on, Convert to is set to that format with Keep the Markdown file too checked, so you get the same files as before.
 
-Open it with **File > Convert Any Document with Pandoc** (Ctrl+P). Its four pages are in the order you use them: choose the settings first, then the files.
+## 7. The Pandoc Options and PDF Settings windows
 
-1. **Format and output**: input format, output format, output folder, the option to also export every PDF conversion from the main window, and **Describe pictures with the local AI vision model** (Alt+C).
-2. **Document options**: standalone, table of contents and depth, section numbering, embedded resources, math rendering, code highlighting, line wrapping, title, language, heading shift.
-3. **Citations, templates and filters**: citeproc, bibliography files, CSL style, reference document, template, filters, PDF engine, extra pandoc arguments.
-4. **Files and folders**: a standard list of the files and folders to convert, **Add Files** (one or many), **Add Folder** (add as many folders as you like), **Remove Selected** (or Delete), **Clear List**, **Include subfolders of added folders**, **File types to take from folders** (for example `docx; md; pdf`; empty means every type pdfmd or pandoc reads), and the pandoc log. Files and folders can also be dropped on the list.
+**Pandoc Options** (Ctrl+P, or the Pandoc Options button) holds every pandoc setting, on the pages listed in section 5. Changing its output format changes Convert to in the main window. Each control's Alt key is unique on its page; press F1 in the window for the full list. **Save Default Template**, **Save Default Reference Document** and **Save Highlight Style** save pandoc's own files so you can customise them, and offer to use the saved file right away.
 
-**Single file or batch.** One file, many files, whole folders or any mix are converted in one batch with the same settings, from any input format (including PDF) to any output format. Pressing Convert with an empty list takes you to the Files and folders page. The status line shows "Converting 3 of 40", long batches announce their progress every quarter, and **Stop** (Alt+P) ends the batch after the current file.
-
-Output files are named after the input with the right extension and saved next to each input, or in the output folder. Files from an added folder keep their subfolder layout inside the output folder. In folders, files already in the output format are skipped (so converting a folder twice doesn't convert the first run's results), as are hidden files, Office lock files (`~$name.docx`) and `_assets` image folders. A file listed on its own and inside a folder is converted once. Existing files are never overwritten and two inputs never share an output name (`_1`, `_2` are added). Settings, including the subfolder and file type choices, are remembered.
+**PDF Settings** (Ctrl+Shift+P, or the PDF Settings button) holds how PDFs are read: profile, OCR mode and language, export images, page breaks, preview, header and footer removal, uppercase headings, orphan joining, heading size ratio, orphan line width, what to do when equations are found, and the accessible HTML copy. These were in the main window before 1.9.0 and keep their Alt keys.
 
 ## 7a. The Vision Model window
 
@@ -276,14 +279,14 @@ Built-in profiles:
 | Slides / handouts | Exports images, inserts page breaks, keeps headers |
 | Scan-heavy / OCR-first | Tesseract OCR on every page |
 
-Save your own with Profiles > Save Current Settings as Profile (Ctrl+S); delete or reset from the same menu. The program remembers the theme, announcement setting, input files, output path, options, profiles, window size and pandoc settings.
+Profiles hold PDF settings. Apply one from Profiles > Apply Profile or from the Profile list in PDF Settings; save your own with Profiles > Save Current Settings as Profile (Ctrl+S); delete or reset from the same menu. The program remembers the theme, announcement setting, input files and folders, output path, Convert to, join and folder choices, PDF settings, profiles, window size and every pandoc option.
 
 ## 9. Command line (pdfmd-cli)
 
 `pdfmd-cli.exe` is installed next to the program (Start menu: **Command Prompt for pdfmd-cli**). With Python, the same tool is `pdfmd` or `python -m pdfmd`.
 
 ```text
-pdfmd-cli [options] INPUT_PDF [INPUT_PDF ...]
+pdfmd-cli [options] INPUT [INPUT ...]
 ```
 
 | Option | Meaning |
@@ -298,6 +301,15 @@ pdfmd-cli [options] INPUT_PDF [INPUT_PDF ...]
 | `--html` | Also write an accessible HTML copy |
 | `--to FORMAT` | Also convert with pandoc to any pandoc output format |
 | `--pandoc-args ARGS` | Extra pandoc options in one quoted argument |
+| `--from FORMAT` | Input format for non-PDF files (default: from the extension) |
+| `--join` | Join every input into one `--to` document (`-o` sets the file) |
+| `--toc`, `--toc-depth N` | Table of contents |
+| `--number-sections` | Number the headings |
+| `--template FILE`, `--reference-doc FILE` | Template; Word, ODT or PowerPoint styles |
+| `--bibliography FILE` (repeatable), `--csl FILE`, `--citeproc` | Citations |
+| `--metadata KEY=VALUE`, `--variable KEY=VALUE` (repeatable) | Document information; template variables |
+| `--pandoc-option NAME=VALUE` (repeatable) | Any option from `--list-pandoc-options`, for example `epub-cover-image=cover.jpg` or `lof=true`; checked before converting |
+| `--list-pandoc-options` | List every pandoc option by page, with its values |
 | `--describe-images {auto,off}` | Describe pictures with the local vision model (default auto: when installed) |
 | `--vision-device DEVICE` | `auto`, `cuda` (NVIDIA CUDA), `vulkan` (any GPU; `gpu` means the same), `cpu`, or a device name from `--vision-status` such as `Vulkan1` |
 | `--vision-model ID` | Model to use or update (see `--vision-status`) |
@@ -323,6 +335,9 @@ pdfmd-cli thesis.pdf --to docx --pandoc-args "--toc --citeproc --bibliography re
 pdfmd-cli *.pdf -o converted --to epub3
 pdfmd-cli report.pdf --export-images --vision-device gpu
 pdfmd-cli slides.pptx --to docx
+pdfmd-cli book.docx --to epub --pandoc-option epub-cover-image=cover.jpg --toc
+pdfmd-cli intro.md chapter1.docx scan.pdf --join --to html -o book.html
+pdfmd-cli --list-pandoc-options
 pdfmd-cli --describe-photos "C:\Photos\Italy 2026" --album-format markdown
 pdfmd-cli --vision-status
 pdfmd-cli --vision-update --vision-model huihui-qwen3-vl-4b-abliterated

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfmd"
-version = "1.8.0"
-description = "Accessible, privacy-first PDF to Markdown converter with OCR, table detection, accessible math (MathJax), pandoc export, local AI picture descriptions, and a screen-reader-friendly GUI"
+version = "1.9.0"
+description = "Accessible, privacy-first PDF to Markdown converter with OCR, table detection, accessible math (MathJax), every pandoc format and option, local AI picture descriptions, and a screen-reader-friendly GUI"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}

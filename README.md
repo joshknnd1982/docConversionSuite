@@ -7,14 +7,25 @@
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![Version](https://img.shields.io/badge/version-1.8.0-purple)
+![Version](https://img.shields.io/badge/version-1.9.0-purple)
 ![Accessibility](https://img.shields.io/badge/screen%20readers-NVDA%20%7C%20JAWS%20%7C%20Narrator-blue)
 
-> **Download for Windows:** get `DocConversionSuite-1.8.0-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible, and pandoc, Tesseract OCR and the AI vision model are built in.
+> **Download for Windows:** get `DocConversionSuite-1.9.0-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible, and pandoc, Tesseract OCR and the AI vision model are built in.
 >
-> **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do) · [What changed in 1.8.0](CHANGES-1.8.0.md) (the vision model, and why it was chosen)
+> **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do) · [What changed in 1.9.0](CHANGES-1.9.0.md) (one window for every format, every pandoc option) · [What changed in 1.8.0](CHANGES-1.8.0.md) (the vision model)
 
 Document Conversion Suite is built on **pdfmd**, the PDF to Markdown engine by Michael Neivandt, and on [pandoc](https://pandoc.org). The Python package and the command-line tool keep the name `pdfmd`.
+
+## What's new in 1.9.0
+
+* **One window converts everything.** Add PDFs, Word, EPUB, HTML, Markdown, OpenDocument, PowerPoint or any of pandoc's 50 input formats, or whole folders, choose **Convert to** (Markdown or any of pandoc's 70 output formats), and press F5. The separate pandoc window with its own file list is gone.
+* **Every pandoc option has a control.** Pandoc Options (Ctrl+P) covers every option of pandoc 3.13 (format extensions, metadata, lists of figures and tables, captions, citations with citeproc, natbib or biblatex, EPUB covers and fonts, slides, PDF engines, filters, includes, sandbox and more), on pages that show only the options for the chosen format. A **Command that will run** field shows the exact pandoc command.
+* **Join files into one document**, in any mix of formats, PDFs included.
+* **Clearer controls**: settings are check boxes, buttons only do things, the same words are used everywhere, and controls that do nothing for your choices are hidden. The PDF options moved to **PDF Settings** (Ctrl+Shift+P) with the same Alt keys.
+* **Save pandoc's own templates, reference documents and highlight styles** to customise them.
+* **Command line**: `--join`, `--from`, `--toc`, `--metadata`, `--bibliography`, `--pandoc-option NAME=VALUE` for any option, and `--list-pandoc-options`.
+
+See **[CHANGES-1.9.0.md](CHANGES-1.9.0.md)** for every change.
 
 ## What's new in 1.8.0
 
@@ -505,18 +516,18 @@ Requires Inno Setup 6. The installer is written to `dist/installer/`.
 
 #### Launching the GUI
 
-* Installed: Start menu > **Document Conversion Suite**, or right-click a PDF (or press the Applications key on it) and choose **Convert with Document Conversion Suite**.
+* Installed: Start menu > **Document Conversion Suite**, or right-click a document or folder (or press the Applications key on it) and choose **Convert with Document Conversion Suite**.
 * From source: `python -m pdfmd.app_gui` (requires `pip install wxPython accessible_output2`).
 
 #### Quick workflow (keyboard)
 
-1. **Ctrl+O** adds PDF files to the **Input PDF files** list (Alt+I). Delete removes the selected file.
-2. The output path is suggested automatically; change it with **Alt+O** or **Ctrl+Shift+O**.
-3. Choose a **Profile** (Alt+E), **OCR mode** (Alt+M) and other options.
-4. Press **F5** (or Ctrl+Enter) to convert. Progress is announced at 25, 50 and 75 percent.
-5. If math is found, choose **Enable MathJax** (the default) for accessible math and an accessible HTML copy.
-6. **Ctrl+Shift+M** opens the Markdown file, **Ctrl+Shift+H** the HTML file, **Ctrl+Shift+F** the folder.
-7. **Ctrl+P** opens **Convert Any Document with Pandoc** for Word, EPUB, HTML, LaTeX and every other pandoc format.
+1. **Ctrl+O** adds files (any document format) to the **Input files and folders** list (Alt+I); **Ctrl+Shift+A** adds a folder. Delete removes the selected items.
+2. Choose what to make in **Convert to** (Alt+T): Markdown, Word, EPUB, HTML, PDF and every other format.
+3. The output path is suggested automatically; change it with **Alt+O** or **Ctrl+Shift+O**.
+4. Optional: **PDF Settings** (Ctrl+Shift+P) for OCR and how PDFs are read; **Pandoc Options** (Ctrl+P) for every pandoc setting.
+5. Press **F5** (or Ctrl+Enter) to convert. Progress is announced at 25, 50 and 75 percent.
+6. If math is found in a PDF converted to Markdown, choose **Enable MathJax** (the default) for accessible math and an accessible HTML copy.
+7. **Ctrl+Shift+M** opens the converted file, **Ctrl+Shift+H** the HTML file, **Ctrl+Shift+F** the folder.
 
 The full keyboard reference, including every Alt+letter key, is in [ACCESSIBILITY.md](ACCESSIBILITY.md) and in the program (F1). Every feature is described in [FEATURES.md](FEATURES.md).
 

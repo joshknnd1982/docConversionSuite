@@ -8,7 +8,7 @@ This guide has three parts:
 2. **What changed and why**: the audit of the old Tkinter interface, and how each problem was fixed.
 3. **For AI models and developers**: a precise, structured description of the accessibility design, the rules any change must follow, and how to test them.
 
-Version: 1.7.1
+Version: 1.9.0
 
 ---
 
@@ -16,15 +16,16 @@ Version: 1.7.1
 
 ### 1.1 Quick start with a screen reader
 
-1. Start **Document Conversion Suite** from the Start menu. Focus starts in the **Input PDF files** list.
-2. Press **Ctrl+O** to add PDF files. A standard Windows Open dialog appears; you can select several files.
-3. Press **F5** (or **Ctrl+Enter**) to convert.
-4. Your screen reader announces progress at 25, 50 and 75 percent, then the result, for example "Conversion complete. Saved notes.md."
-5. If the document contains math, a dialog asks whether to enable MathJax. The answer defaults to **Enable MathJax**, so pressing Enter accepts it.
-6. Press **Ctrl+Shift+M** to open the Markdown file, **Ctrl+Shift+H** to open the accessible HTML version, or **Ctrl+Shift+F** to open the output folder.
-7. Press **F1** at any time for the full list of keyboard shortcuts.
+1. Start **Document Conversion Suite** from the Start menu. Focus starts in the **Input files and folders** list.
+2. Press **Ctrl+O** to add files: PDF, Word, EPUB, HTML, Markdown, OpenDocument, PowerPoint or any other format pandoc reads. A standard Windows Open dialog appears; you can select several files. Press **Ctrl+Shift+A** to add a whole folder.
+3. Press **Alt+T** and choose what to make in **Convert to**: Markdown (the default), Word, EPUB, HTML, PDF, PowerPoint and every other format.
+4. Press **F5** (or **Ctrl+Enter**) to convert.
+5. Your screen reader announces progress at 25, 50 and 75 percent, then the result, for example "Conversion complete. Saved notes.docx."
+6. If a PDF converted to Markdown contains math, a dialog asks whether to enable MathJax. The answer defaults to **Enable MathJax**, so pressing Enter accepts it. Other formats get accessible math automatically.
+7. Press **Ctrl+Shift+M** to open the converted file, **Ctrl+Shift+H** to open the accessible HTML version, or **Ctrl+Shift+F** to show the output folder.
+8. Press **F1** at any time for the full list of keyboard shortcuts.
 
-To convert to Word, EPUB, HTML, LaTeX or any other format, press **Ctrl+P** to open the **Convert Any Document with Pandoc** window.
+How PDFs are read (OCR, images, headings, math) is set in **PDF Settings** (**Ctrl+Shift+P**). Every pandoc setting for the chosen format (table of contents, citations, templates, styles, e-book covers, slides, PDF engines, filters and more) is in **Pandoc Options** (**Ctrl+P**).
 
 Scanned PDFs are pictures of text that screen readers can't read. OCR is set to **Auto** by default, so scanned pages are recognised with Tesseract OCR and become real, readable text. If Tesseract isn't installed, the program tells you which file is scanned and offers to install it. Press **Ctrl+T** at any time to install or update Tesseract and to add OCR languages.
 
@@ -81,77 +82,118 @@ The HTML pages and Markdown files load MathJax from the jsDelivr content deliver
 
 ### 1.5 Keyboard reference: main window
 
+The main window has four groups, in the order you use them: **Files to convert**, **Convert to**, **Save to** and **Progress**. Controls that do nothing for your current choices are hidden: the folder settings appear when the list has a folder, **Join all files into one document** appears for formats other than Markdown, and **Keep the Markdown file too** appears when PDFs are converted to another format.
+
 #### Commands
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+O | Add PDF files |
+| Ctrl+O | Add files |
+| Ctrl+Shift+A | Add a folder |
 | Ctrl+Shift+O | Choose output file or folder |
-| F5 or Ctrl+Enter | Start conversion |
-| Shift+F5, or Esc while converting | Stop conversion |
-| Ctrl+P | Convert any document with pandoc |
+| F5 or Ctrl+Enter | Convert |
+| Shift+F5, or Esc while converting | Stop converting |
+| Ctrl+Shift+P | PDF Settings |
+| Ctrl+P | Pandoc Options |
 | Ctrl+T | Tesseract OCR: install, update, add languages |
-| Ctrl+Shift+F | Open the output folder |
-| Ctrl+Shift+M | Open the converted Markdown file |
+| Ctrl+I | Vision model |
+| Ctrl+D | Describe a folder of photos |
+| Ctrl+Shift+F | Show the output folder |
+| Ctrl+Shift+M | Open the converted file |
 | Ctrl+Shift+H | Open the accessible HTML file |
 | Ctrl+Shift+S | Speak the current status |
-| Ctrl+S | Save current settings as a profile |
-| Delete (in the input list) | Remove the selected files |
+| Ctrl+S | Save current PDF settings as a profile |
+| Delete (in the input list) | Remove the selected files and folders |
 | F1 | Keyboard shortcuts |
 | Alt+F4 | Exit |
 
 #### Go to a control (hold Alt)
 
-| Key | Control | Type |
-| --- | --- | --- |
-| Alt+I | Input PDF files | List |
-| Alt+A | Add PDFs | Button |
-| Alt+R | Remove Selected | Button |
-| Alt+Y | Empty List | Button |
-| Alt+O | Output file or folder | Edit field |
-| Alt+B | Browse Output | Button |
-| Alt+E | Profile | Combo box |
-| Alt+M | OCR mode | Combo box |
-| Alt+G | OCR language | Editable combo box |
-| Alt+X | Export images | Check box |
-| Alt+K | Insert page breaks | Check box |
-| Alt+3 | Preview first 3 pages only | Check box |
-| Alt+T | Remove repeating header and footer text | Check box |
-| Alt+U | Promote uppercase lines to headings | Check box |
-| Alt+J | Join short orphan lines into paragraphs | Check box |
-| Alt+Z | Heading size ratio (percent of body text) | Spin box |
-| Alt+W | Orphan line width (characters) | Spin box |
-| Alt+Q | When equations are found | Combo box |
-| Alt+N | Also save an accessible HTML copy of every document | Check box |
-| Alt+C | Convert | Button |
-| Alt+S | Stop | Button |
-| Alt+D | Open Output Folder | Button |
-| Alt+L | Conversion log | Read-only edit field |
+| Key | Control | Type | Group |
+| --- | --- | --- | --- |
+| Alt+I | Input files and folders | List | Files to convert |
+| Alt+A | Add Files | Button | Files to convert |
+| Alt+D | Add Folder | Button | Files to convert |
+| Alt+R | Remove Selected Files | Button | Files to convert |
+| Alt+E | Clear List (asks first when the list has more than one item) | Button | Files to convert |
+| Alt+B | Include subfolders of added folders | Check box | Files to convert |
+| Alt+Y | File types to take from folders | Edit field | Files to convert |
+| Alt+T | Convert to | Combo box | Convert to |
+| Alt+J | Join all files into one document | Check box | Convert to |
+| Alt+K | Keep the Markdown file too | Check box | Convert to |
+| Alt+4 | Describe pictures with the local AI vision model | Check box | Convert to |
+| Alt+G | PDF Settings | Button | Convert to |
+| Alt+N | Pandoc Options | Button | Convert to |
+| Alt+O | Output file or folder | Edit field | Save to |
+| Alt+U | Choose Output | Button | Save to |
+| Alt+C | Convert | Button | Progress |
+| Alt+S | Stop | Button | Progress |
+| Alt+W | Show Output Folder | Button | Progress |
+| Alt+L | Conversion log | Read-only edit field | Progress |
 
 An Alt key on a button presses it; on a check box it toggles the box and moves focus to it.
 
 Menu bar keys: Alt+F File, Alt+P Profiles, Alt+V View, Alt+H Help. No control uses those letters. Help > Check for Tesseract Updates opens the Tesseract window and checks right away.
 
-### 1.6 Keyboard reference: Convert Any Document with Pandoc window
+The list is a standard multiple-selection list box. Each folder is read as "Folder *name*, *N* files" (or "with subfolders, *N* files"), so you hear how many files it will contribute; the count updates when you change the subfolder or file type settings. Select a range with Shift+arrows; to pick items that aren't next to each other, press Shift+F8, move with the arrows and press Space on each item (Shift+F8 again ends this mode). Then press Delete. Adding, removing and clearing are announced with the new totals.
 
-The window has four pages in a tab control, in the order you use them: settings first, the files and folders to convert last. **Ctrl+Tab** and **Ctrl+Shift+Tab** move between pages; your screen reader announces the page name. Focus starts on the output format. The Convert, Install Pandoc and Close buttons are always available; Stop appears while a batch runs.
+### 1.5a Keyboard reference: PDF Settings window
 
-| Key | Action |
+Open it with **Ctrl+Shift+P** or the PDF Settings button (Alt+G). Focus starts on OCR mode. These are the PDF options that used to be in the main window, with the same keys.
+
+| Key | Control |
 | --- | --- |
-| F5 or Alt+V | Convert every file and folder in the list (with an empty list, moves to page 4 and the Add Files button) |
-| Alt+P | Stop a running batch after the current file (shown only while converting) |
-| Esc | Close (settings are kept; asks first while a batch runs) |
-| Alt+P | Install Pandoc (shown only when pandoc is missing) |
+| Alt+E | Profile |
+| Alt+M | OCR mode |
+| Alt+G | OCR language |
+| Alt+X | Export images |
+| Alt+K | Insert page breaks |
+| Alt+3 | Preview first 3 pages only |
+| Alt+T | Remove repeating header and footer text |
+| Alt+U | Promote uppercase lines to headings |
+| Alt+J | Join short orphan lines into paragraphs |
+| Alt+Z | Heading size ratio (percent of body text) |
+| Alt+W | Orphan line width (characters) |
+| Alt+Q | When equations are found |
+| Alt+N | Save an accessible HTML copy of each Markdown file |
+| Alt+R | Reset to Defaults |
+| Enter / Esc | OK / Cancel |
 
-**Page 1, Format and output:** Alt+F input format, Alt+O output format, Alt+D output folder, Alt+B browse, Alt+X also export every PDF conversion in the main window, Alt+C describe pictures.
+### 1.6 Keyboard reference: Pandoc Options window
 
-**Page 2, Document options:** Alt+S standalone document, Alt+C table of contents, Alt+N number sections, Alt+E embed images and styles, Alt+D depth of contents, Alt+M math rendering, Alt+H code highlighting style, Alt+W line wrapping, Alt+T document title, Alt+L document language, Alt+G shift heading levels.
+Open it with **Ctrl+P** or the Pandoc Options button (Alt+N). It holds settings only; files are converted from the main window. The pages are in a tab control: **Ctrl+Tab** and **Ctrl+Shift+Tab** move between them and your screen reader announces the page name. Focus starts on the output format.
 
-**Page 3, Citations, templates and filters:** Alt+C process citations, Alt+B bibliography files, Alt+I choose bibliography, Alt+S citation style, Alt+F choose style file, Alt+R reference document, Alt+U choose document, Alt+T template, Alt+M choose template, Alt+L filters, Alt+E choose filter, Alt+N PDF engine, Alt+X extra pandoc arguments.
+Only the options for the chosen output format are shown, and pages with nothing to show are left out, so Word output never shows e-book or slide options. Check **Show advanced options** (Alt+V) to see options most people never need. The read-only **Command that will run** field on the Command line page shows the exact pandoc command, and changes as you change options. Press **F1** in the window to hear every access key.
 
-**Page 4, Files and folders:** Alt+I list of files and folders, Alt+A add files, Alt+F add folder, Alt+R remove selected (Delete works in the list too), Alt+E clear list, Alt+S include subfolders, Alt+T file types to take from folders, Alt+G pandoc log.
+The access keys are given out automatically from each control's label and are unique on every page. They are, for every page:
 
-The list is a standard multiple-selection list box. Each folder is read as "Folder *name*, *N* files" (or "with subfolders, *N* files"), so you hear how many files it will contribute; the count updates when you change the subfolder or file type settings. Select a range with Shift+arrows; to pick items that aren't next to each other, press Shift+F8, move with the arrows and press Space on each item (Shift+F8 again ends this mode). Then press Delete. Adding, removing and clearing are announced with the new totals. During a batch the status line at the top of the window reads "Converting *n* of *total*: *file name*", and progress is announced every quarter of a batch of eight files or more.
+**Format:** Alt+O Output format; Alt+I Input format; Alt+S Standalone document (complete file with header and footer); Alt+T Template; Alt+C Choose Template...; Alt+D Save Default Template...; Alt+A Pandoc data folder; Alt+H Choose Data Folder...; Alt+E Defaults file; Alt+U Choose Defaults File...; Alt+R Output format extensions; Alt+N Input format extensions.
+
+**Document:** Alt+D Document title; Alt+L Document language; Alt+M Metadata (one key=value per line); Alt+E Metadata file; Alt+C Choose Metadata File...; Alt+T Template variables (one key=value per line); Alt+A Template variables as JSON (one key:JSON per line); Alt+I Include in header; Alt+H Choose Header Files...; Alt+B Include before body; Alt+O Choose Before-Body Files...; Alt+N Include after body; Alt+S Choose After-Body Files....
+
+**Contents and sections:** Alt+T Table of contents; Alt+D Depth of contents (heading levels); Alt+L List of figures; Alt+O List of tables; Alt+N Number sections; Alt+S Section number offset; Alt+H Top-level headings are; Alt+B Shift heading levels by; Alt+C Figure captions; Alt+A Table captions.
+
+**Math and code:** Alt+M Math rendering; Alt+C Code highlighting; Alt+S Save Highlight Style...; Alt+E Extra syntax definitions; Alt+H Choose Syntax Files...; Alt+U Use the LaTeX listings package for code; Alt+I Classes for indented code blocks; Alt+T Spaces per tab; Alt+K Keep tabs in code blocks.
+
+**Citations:** Alt+H How citations are handled; Alt+L Leave as written; Alt+W Format with citeproc; Alt+N LaTeX natbib; Alt+B LaTeX biblatex; Alt+I Bibliography files; Alt+C Choose Bibliography...; Alt+S Citation style (CSL); Alt+O Choose Style File...; Alt+J Journal abbreviations; Alt+A Choose Abbreviations File....
+
+**Text layout:** Alt+L Line wrapping; Alt+W Line width (characters); Alt+E Line endings; Alt+R Picture resolution (dots per inch); Alt+U Use reference-style links; Alt+A Footnotes and references go; Alt+M Markdown heading style; Alt+T Write tables as list tables; Alt+O Use only ASCII characters; Alt+H Remove HTML comments.
+
+**Web pages and slides:** Alt+E Embed pictures, styles and scripts in one HTML file; Alt+S Style sheets (CSS); Alt+C Choose Style Sheets...; Alt+W Wrap sections in section elements; Alt+H Hide e-mail addresses; Alt+I Prefix for identifiers; Alt+T Window title prefix; Alt+U Use q elements for quotations; Alt+L Show list items one at a time; Alt+A Heading level that starts a slide.
+
+**Word, OpenDocument, PowerPoint:** Alt+R Reference document; Alt+C Choose Reference Document...; Alt+S Save Default Reference Document...; Alt+L Link pictures instead of embedding them; Alt+T Tracked changes in Word files.
+
+**E-books:** Alt+C Cover picture; Alt+H Choose Cover Picture...; Alt+I Include a title page; Alt+E E-book metadata file; Alt+M Choose Metadata XML...; Alt+T Fonts to embed; Alt+O Choose Fonts...; Alt+S Start a new file at heading level; Alt+N Chunk file names; Alt+B Folder inside the e-book.
+
+**PDF:** Alt+E PDF engine; Alt+O PDF engine options (one per line); Alt+T Typst inputs (one key=value per line).
+
+**Input and media:** Alt+S Save pictures from Word, OpenDocument, EPUB and PowerPoint files; Alt+W Where to look for pictures; Alt+D Default picture extension; Alt+A Abbreviations file; Alt+C Choose Abbreviations...; Alt+R Read each input file on its own; Alt+N Notebook output cells; Alt+H Web request headers (one name=value per line); Alt+K Skip web security certificate checks; Alt+O Sandbox (no file or web access).
+
+**Filters:** Alt+I Filters, in the order they run; Alt+A Add Lua Filter...; Alt+D Add Filter Program...; Alt+R Remove Filter; Alt+M Move Up; Alt+O Move Down.
+
+**Command line:** Alt+E Extra pandoc arguments; Alt+D Detailed messages; Alt+H Hide warnings; Alt+T Treat warnings as errors; Alt+R Trace the reader (for debugging); Alt+S Save pandoc's messages to a JSON file; Alt+C Choose Log File...; Alt+W Command that will run.
+
+The extension lists on the Format page are native list views with check boxes: arrow to an extension and press Space to turn it on or off. Each item also says whether pandoc turns it on by default.
 
 ### 1.7 Keyboard reference: Tesseract OCR window
 
@@ -208,7 +250,7 @@ Open it with **Ctrl+D** (File > Describe a Folder of Photos). Each photo's descr
 | Alt+L | Log |
 | Alt+C or Esc | Close |
 
-In the main window, **Alt+4** toggles **Describe pictures with the local AI vision model**. In the pandoc window, **Alt+C** toggles the same option for pandoc conversions.
+In the main window, **Alt+4** toggles **Describe pictures with the local AI vision model**. The same check box applies to every format: PDFs and every document pandoc reads.
 
 ### 1.8 Accessible installer
 
@@ -283,7 +325,7 @@ This part is written so that an AI coding assistant or a new developer can chang
 ```yaml
 product: Document Conversion Suite
 engine: pdfmd (Python package "pdfmd")
-version: 1.8.0
+version: 1.9.0
 platform: Windows 10/11 (wxPython GUI); engine and CLI are cross-platform
 gui_toolkit: wxPython 4.x (native Win32 controls; MSAA/UIA provided by Windows)
 screen_reader_speech: accessible_output2 (NVDA, JAWS, System Access, Dolphin, ZoomText, PC-Talker, ZDSR); SAPI fallback deliberately disabled
@@ -296,11 +338,13 @@ vision_model: llama-server on 127.0.0.1 (random port, random API key), started p
 tool_priority: env var (PDFMD_PANDOC / PDFMD_TESSERACT) > user/system install > bundled copy
 config_file: "%USERPROFILE%\\.pdfmd_gui.json"
 files:
-  pdfmd/app_gui.py: main window (PdfMdFrame), menus, worker thread, MathJax prompt, pandoc auto-export
+  pdfmd/app_gui.py: main window (PdfMdFrame): any input, Convert to, join, menus, worker thread, MathJax prompt
+  pdfmd/gui_pdf_settings.py: PdfSettingsDialog (Ctrl+Shift+P), PDF option constants and defaults
   pdfmd/gui_a11y.py: Announcer, DescribedAccessible, describe(), MnemonicHandler
-  pdfmd/gui_pandoc.py: PandocDialog (three-page notebook)
+  pdfmd/gui_pandoc.py: PandocOptionsDialog (Ctrl+P), built from pandoc_options.OPTIONS; pages and controls shown per output format
+  pdfmd/pandoc_options.py: one OptionSpec per pandoc option (flag, kind, label, help, page, formats); assign_access_keys()
   pdfmd/mathjax.py: math detection, Unicode-to-LaTeX, MathJax header, accessible HTML writer
-  pdfmd/pandoc_support.py: find pandoc, list formats, build arguments, convert
+  pdfmd/pandoc_support.py: find pandoc, supported_flags (from --help), formats, extensions, build_args, convert, join_convert
   pdfmd/tesseract_support.py: find/configure Tesseract, version, languages, update check, install, language downloads
   pdfmd/gui_tesseract.py: TesseractDialog (status, check, install/update, languages)
   pdfmd/extract.py: native/OCR extraction; _with_ruled_tables() reads ruled tables with PyMuPDF
@@ -345,19 +389,32 @@ files:
 14. Don't speak through SAPI when no screen reader is running.
 15. Keep tables intact: store table data in the `Block` fields, never as ad-hoc attributes (they are lost by `dataclasses.replace`); never merge text into a table row; keep header rows; pass Markdown tables to pandoc unchanged.
 16. Keep OCR on Auto by default and never let a scanned PDF fail silently: explain it and offer Tesseract.
+17. A new pandoc option is one `OptionSpec` in `pdfmd/pandoc_options.py`, never a hand-made control. Labels have no `&`: the Pandoc Options window assigns unique keys per page, avoiding V, F and P (its bottom row).
+18. Hide controls that do nothing for the current choices instead of only disabling them, and move focus first if one of them has it.
+19. `python -m pytest` must pass, including `tests/test_gui_access_keys.py`, which builds every window and checks labels, descriptions and unique access keys.
 
 ### 3.4 How to add a new option (example)
 
+A new **pandoc** option needs no GUI code. Add one entry to `OPTIONS` in `pdfmd/pandoc_options.py`:
+
 ```python
-# In PdfMdFrame._build_ui, inside the right group box (parent = obox):
-lbl = wx.StaticText(obox, label="&Example option:")   # pick an unused letter
-self.example_choice = wx.Choice(obox, choices=["One", "Two"])
-self._describe(self.example_choice, "What this option does, in one or two sentences.")
-sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-sizer.Add(self.example_choice, 0)
-# Then: save/load it in _options_from_controls / _apply_options_dict,
-# add the key to the tables in ACCESSIBILITY.md and SHORTCUTS_TEXT,
-# and run the tests in 3.6.
+OptionSpec("example_option", "--example-option", SWITCH, "Example option",
+           "What this option does, in one or two sentences. Pandoc option --example-option.",
+           "layout", default=False, negatable=True, outputs=_o("html")),
+```
+
+The Pandoc Options window shows it (on the Text layout page, for HTML output), `build_args` passes it, profiles save it and `--pandoc-option example-option=true` works on the command line. Then run the tests in 3.6.
+
+A new **PDF** option goes in `pdfmd/gui_pdf_settings.py`:
+
+```python
+# In PdfSettingsDialog._build:
+lab = wx.StaticText(self, label="&Example option:")   # an unused letter, created first
+self.example_choice = wx.Choice(self, choices=["One", "Two"])
+describe(self.example_choice, "What this option does, in one or two sentences.")
+# Then: add it to DEFAULT_OPTIONS, _apply and collect, pass it on in
+# PdfMdFrame._engine_options, add the key to the tables in this file and
+# to SHORTCUTS_TEXT, and run the tests in 3.6.
 ```
 
 ### 3.5 Math pipeline
@@ -375,5 +432,7 @@ sizer.Add(self.example_choice, 0)
 * **Keyboard simulation.** `wx.UIActionSimulator` presses Alt+letter keys, Tab, F5 and Ctrl+Tab, and the test checks which control has focus. Result: main window 21 of 21 checks passed (every access key across group boxes, complete Tab order, F5 conversion, MathJax offer, focus kept after conversion). Pandoc window 21 of 21 checks passed (access keys on all three pages, Ctrl+Tab page switching, F5 conversion of a PDF to Word with extra arguments, Unicode math passed to pandoc as TeX). Tesseract window 7 of 7 checks passed (status text without Tesseract, live update check, install button state, access keys). Regression runs after the table and OCR changes passed again.
 * **Real conversions with the bundled tools (14 of 14 passed).** An image-only scanned PDF was converted with Auto OCR: all text was recovered and both tables (one ruled) were rebuilt as tables. With the bundled pandoc: Word got 2 real tables and 4 native equations with no MathJax code leaking in; ODT got 2 tables; EPUB got MathML math and both tables; HTML got header cells, `lang` and MathJax math; GitHub Markdown kept pipe tables; and a Word file converted back to Markdown kept its tables.
 * **MathJax output.** A converted test document was opened in a browser. The accessibility tree exposed each expression as named math, for example "E equals m c squared", "x sub i is greater than or equal to 0", "alpha plus beta cubed equals gamma"; Nemeth Braille strings were generated; each expression was keyboard focusable.
+
+* **Automated checks (1.9.0).** `tests/test_gui_access_keys.py` builds the main window, PDF Settings and Pandoc Options (for twelve output formats, with and without advanced options) and checks that every visible interactive control has a description, that every list, edit field and combo box has a label created right before it, and that Alt keys are unique among the controls visible together. `tests/test_pandoc_options.py` checks the command line every option produces and converts a sample to every pandoc output format.
 
 When you change the GUI, repeat these checks: Tab through every control with a screen reader running, try every Alt key in the tables above, convert a file with math, and confirm announcements.

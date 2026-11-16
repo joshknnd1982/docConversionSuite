@@ -68,7 +68,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
-Name: "contextmenu"; Description: "Add ""Convert with Document Conversion Suite"" to the right-click menu (and Applications key menu) of PDF files"; GroupDescription: "Explorer integration:"
+Name: "contextmenu"; Description: "Add ""Convert with Document Conversion Suite"" to the right-click menu (and Applications key menu) of documents and folders"; GroupDescription: "Explorer integration:"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "*.gguf"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -91,11 +91,62 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
-; "Convert with Document Conversion Suite" on PDF files (Explorer context
-; menu, also reached with the Applications key or Shift+F10).
+; "Convert with Document Conversion Suite" on documents and folders
+; (Explorer context menu, also reached with the Applications key or Shift+F10).
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.docx\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.docx\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.docx\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.odt\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.odt\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.odt\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rtf\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rtf\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rtf\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.html\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.html\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.html\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.htm\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.htm\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.htm\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.md\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.md\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.md\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.markdown\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.markdown\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.markdown\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pptx\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pptx\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pptx\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.tex\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.tex\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.tex\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rst\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rst\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.rst\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.adoc\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.adoc\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.adoc\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.org\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.org\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.org\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ipynb\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ipynb\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ipynb\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.typ\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.typ\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.typ\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.fb2\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\Directory\shell\DocConversionSuite"; ValueType: string; ValueName: ""; ValueData: "Convert with {#AppName}"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\Directory\shell\DocConversionSuite"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\Directory\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
