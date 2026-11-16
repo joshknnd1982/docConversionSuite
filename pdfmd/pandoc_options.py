@@ -228,7 +228,7 @@ OPTIONS: List[OptionSpec] = [
                "How equations are written. Automatic picks the most accessible method: MathJax "
                "for web pages, MathML for EPUB, and native equations for Word, OpenDocument "
                "and PowerPoint.", "math", default="auto", special=True),
-    OptionSpec("highlight_style", "--syntax-highlighting", CHOICE, "Code highlighting",
+    OptionSpec("highlight_style", "--syntax-highlighting", COMBO, "Code highlighting",
                "How code blocks are coloured. None turns highlighting off; Idiomatic uses the "
                "output format's own method (for example LaTeX listings). Use Save Highlight "
                "Style to get a theme file to edit. Pandoc option --syntax-highlighting.",
