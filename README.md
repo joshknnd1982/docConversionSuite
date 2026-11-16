@@ -1,20 +1,31 @@
 # Document Conversion Suite
 
-**An accessible, privacy-first document converter. It turns PDFs, including scanned documents, into clean, structured Markdown with the pdfmd engine, makes math accessible with MathJax, writes accessible HTML, and converts between every format pandoc supports with all of pandoc's options. The desktop app is fully usable with a screen reader and with the keyboard alone.**
+**An accessible, privacy-first document converter. It turns PDFs, including scanned documents, into clean, structured Markdown with the pdfmd engine, makes math accessible with MathJax, writes accessible HTML, converts between every format pandoc supports with all of pandoc's options, and describes the pictures in any document (photos, charts, graphs, maps, diagrams) with a small AI vision model that runs on your own computer. The desktop app is fully usable with a screen reader and with the keyboard alone.**
 
 **Accessible. Local. Intelligent. Fully offline.**
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![Version](https://img.shields.io/badge/version-1.7.1-purple)
+![Version](https://img.shields.io/badge/version-1.8.0-purple)
 ![Accessibility](https://img.shields.io/badge/screen%20readers-NVDA%20%7C%20JAWS%20%7C%20Narrator-blue)
 
-> **Download for Windows:** get `DocConversionSuite-1.7.1-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible, and pandoc and Tesseract OCR are built in.
+> **Download for Windows:** get `DocConversionSuite-1.8.0-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible, and pandoc, Tesseract OCR and the AI vision model are built in.
 >
-> **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do)
+> **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do) · [What changed in 1.8.0](CHANGES-1.8.0.md) (the vision model, and why it was chosen)
 
 Document Conversion Suite is built on **pdfmd**, the PDF to Markdown engine by Michael Neivandt, and on [pandoc](https://pandoc.org). The Python package and the command-line tool keep the name `pdfmd`.
+
+## What's new in 1.8.0
+
+* **Pictures are described by a local AI vision model.** Photos, charts, graphs, maps and diagrams in PDFs (including drawn charts and photos inside scanned pages) and in every document pandoc reads (Word, EPUB, ODT, PowerPoint, HTML, Markdown and more) are described by **Qwen3-VL 2B Instruct, abliterated**, running in **llama.cpp** on your computer. Nothing is uploaded.
+* **Alternative text or a block quote, depending on the output**: when the output keeps the picture (exported images, Word, EPUB, HTML, ODT, PowerPoint...), the description becomes its alternative text; when it can't (Markdown without exported images, plain text and other text-only formats), it is written as a block quote: `> **Image description:** ...`. Pictures that are mostly text get their recognised text instead. Alternative text an author wrote is kept.
+* **CPU, NVIDIA CUDA or Vulkan, your choice**: **NVIDIA GPU with CUDA** is offered when an NVIDIA card is detected (the CUDA engine is a one-button download); **Any GPU with Vulkan** works with NVIDIA, AMD and Intel graphics, including integrated graphics; **CPU only** works on every computer. Automatic picks the best one. The model needs about 3 GB of memory, so it runs on 8 GB laptops with integrated graphics, and takes about half a second per picture on a graphics card.
+* **Describe a folder of photos** (Ctrl+D): every photo gets a title and a description, saved as an accessible web page or Markdown file in the order the photos were taken, ideal for reviewing vacation photos and family memories with a screen reader.
+* **Vision Model window** (Ctrl+I): processor, model (including a larger 4B model for powerful PCs), **Update Vision Model** with one button press (checksum-verified downloads), test on a picture.
+* **Command line**: `--describe-images`, `--vision-device`, `--vision-model`, `--vision-status`, `--vision-update`, `--describe-photos FOLDER`, and non-PDF inputs converted with pandoc with their pictures described.
+
+See **[CHANGES-1.8.0.md](CHANGES-1.8.0.md)** for every change and how the model was chosen.
 
 ## What's new in 1.7.1
 
@@ -663,6 +674,20 @@ options:
                         Combine with '+' for multiple: 'eng+fra'.
                         Only used when --ocr is not 'off'.
   
+  --describe-images {auto,off}
+                        Describe pictures and charts with the local AI vision
+                        model (default auto: when the model is installed)
+  --vision-device DEVICE
+                        auto, cuda (NVIDIA), vulkan (any GPU), cpu, or a
+                        device name such as Vulkan1
+  --vision-model ID     Vision model to use (see --vision-status)
+  --vision-status       Show the vision engine, models and GPUs, then exit
+  --vision-update       Download a newer vision engine or model, then exit
+  --describe-photos FOLDER
+                        Describe every photo in FOLDER into an album
+  --album-format {html,markdown}
+                        Album format for --describe-photos (default html)
+  --recursive           With --describe-photos, include subfolders
   --export-images       Export images to _assets/ folder next to output file,
                         with Markdown image references appended to document.
   

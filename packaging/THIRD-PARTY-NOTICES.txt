@@ -42,6 +42,53 @@ Languages: ara, chi_sim, chi_tra, deu, eng, fra, hin, ita, jpn, kor, nld,
           osd, pol, por, rus, spa, tur, vie
 
 
+llama.cpp (build b12441, Vulkan build for Windows x64)
+-----------------------------------------------------
+Folder:   vision\runtime\
+Authors:  Georgi Gerganov and the ggml / llama.cpp contributors
+License:  MIT License (https://github.com/ggml-org/llama.cpp/blob/master/LICENSE)
+Source:   https://github.com/ggml-org/llama.cpp/tree/b12441
+Binary:   https://github.com/ggml-org/llama.cpp/releases/tag/b12441 (unmodified;
+          only llama-server and the libraries it needs are included)
+
+The OpenMP runtime (libomp.dll) is part of the LLVM project and licensed
+under the Apache License 2.0 with LLVM Exceptions (see
+vision\runtime\LICENSE-LLVM-OpenMP). llama-server is run as a separate
+process, listening only on this computer (127.0.0.1) with a random access
+key.
+
+
+NVIDIA CUDA engine (optional download, not in the installer)
+-----------------------------------------------------------
+When you choose "NVIDIA GPU with CUDA" and press Download Vision Model, the
+CUDA build of llama.cpp b12441 (MIT) and the CUDA runtime libraries it
+needs (cudart, cuBLAS), as packaged in the official llama.cpp release, are
+downloaded from https://github.com/ggml-org/llama.cpp/releases/tag/b12441
+into %LOCALAPPDATA%\DocConversionSuite\vision. The CUDA runtime libraries
+are NVIDIA software distributed under the NVIDIA CUDA Toolkit End User
+License Agreement (https://docs.nvidia.com/cuda/eula/).
+
+
+Vision model: Qwen3-VL 2B Instruct, abliterated (Huihui), GGUF
+--------------------------------------------------------------
+Folder:   vision\models\huihui-qwen3-vl-2b-abliterated\
+Files:    Huihui-Qwen3-VL-2B-Instruct-abliterated.Q4_K_M.gguf (language model)
+          Huihui-Qwen3-VL-2B-Instruct-abliterated.mmproj-Q8_0.gguf (vision encoder)
+License:  Apache License 2.0
+Base:     Qwen/Qwen3-VL-2B-Instruct by the Qwen team, Alibaba Cloud
+          (https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct, Apache-2.0)
+Changes:  abliterated by huihui-ai
+          (https://huggingface.co/huihui-ai/Huihui-Qwen3-VL-2B-Instruct-abliterated)
+GGUF:     mradermacher
+          (https://huggingface.co/mradermacher/Huihui-Qwen3-VL-2B-Instruct-abliterated-GGUF,
+          revision a12463c6c2296bf90a8ee89498af719d82e66332)
+
+The model files are included unmodified and checked against their SHA-256
+checksums (listed in vision-models.json) when the installer is built. Other
+models offered in the Vision Model window (Ctrl+I) are downloaded only when
+you ask for them, from the addresses listed in vision-models.json.
+
+
 Python components (inside _internal\)
 -------------------------------------
 pdfmd engine         MIT License, Michael Neivandt (https://github.com/M1ck4/pdfmd)
@@ -50,6 +97,8 @@ wxPython             wxWindows Library Licence (https://wxpython.org)
 accessible_output2   MIT License (https://github.com/accessibleapps/accessible_output2)
 pytesseract          Apache License 2.0 (https://github.com/madmaze/pytesseract)
 Pillow               MIT-CMU License (https://python-pillow.org)
+pillow-heif          BSD 3-Clause License (https://github.com/bigcat88/pillow_heif);
+                     includes libheif (LGPL-3.0) and libde265 (LGPL-3.0)
 NumPy                BSD 3-Clause License (https://numpy.org)
 Python-Markdown      BSD 3-Clause License (https://github.com/Python-Markdown/markdown)
 pywin32              Python Software Foundation License (https://github.com/mhammond/pywin32)

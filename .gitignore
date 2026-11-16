@@ -161,6 +161,7 @@ tmp/
 !ACCESSIBILITY.md
 !FEATURES.md
 !doc/*.md
+!CHANGES-*.md
 !packaging/*.spec
 packaging/build/
 .claude/

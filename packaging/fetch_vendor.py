@@ -1,20 +1,26 @@
 """Download and verify the third-party programs bundled with the installer.
 
-Document Conversion Suite ships two separate programs next to its own
+Document Conversion Suite ships three separate programs next to its own
 executables:
 
-* pandoc (GPL-2.0-or-later), from the official GitHub release, and
+* pandoc (GPL-2.0-or-later), from the official GitHub release,
 * Tesseract OCR (Apache-2.0), the UB Mannheim Windows build, plus trained
   OCR data for 17 common languages from the Tesseract project's
-  tessdata_fast repository.
+  tessdata_fast repository, and
+* the picture-description engine: llama.cpp's llama-server (MIT), Vulkan
+  build for Windows x64, with the default vision model from
+  vision-models.json (Apache-2.0 weights, GGUF).
 
 Every file is checked against a published checksum before it is used:
 pandoc's SHA-256 from its GitHub release, the Tesseract installer's SHA-256
-from the Windows Package Manager manifest, and each language file's git
-blob hash from the tessdata_fast repository.
+from the Windows Package Manager manifest, each language file's git blob
+hash from the tessdata_fast repository, and the llama.cpp release and model
+files' SHA-256 from vision-models.json (taken from the GitHub release and
+Hugging Face file listings).
 
 Usage:  python packaging/fetch_vendor.py
-Output: packaging/vendor/pandoc/ and packaging/vendor/Tesseract-OCR/
+Output: packaging/vendor/pandoc/, packaging/vendor/Tesseract-OCR/ and
+        packaging/vendor/vision/
 Needs 7-Zip (7z.exe) to unpack the Tesseract installer.
 """
 from __future__ import annotations
@@ -182,10 +188,66 @@ def build_tesseract() -> None:
     print(f"  -> {out}")
 
 
+def build_vision() -> None:
+    """llama.cpp engine + the recommended vision model, as vision/ in the app."""
+    import json
+
+    print("Vision model")
+    catalog = json.loads((ROOT.parent / "vision-models.json").read_text(encoding="utf-8"))
+    rt = catalog["runtime"]
+    asset = rt["assets"]["windows-x64"]
+    z = fetch(rt["url_base"] + asset["file"], CACHE / "llama" / asset["file"])
+    verify(z, asset["sha256"])
+    out = VENDOR / "vision"
+    runtime = out / "runtime"
+    shutil.rmtree(runtime, ignore_errors=True)
+    runtime.mkdir(parents=True)
+    keep_exe = {"llama-server.exe"}
+    with zipfile.ZipFile(z) as zf:
+        for info in zf.infolist():
+            name = Path(info.filename).name
+            if info.is_dir() or not name:
+                continue
+            # Only the server and its libraries; the other llama.cpp tools
+            # are not needed.
+            if name.lower().endswith(".exe") and name.lower() not in keep_exe:
+                continue
+            if name.lower().endswith("-impl.dll") and not name.lower().startswith("llama-server"):
+                continue
+            with zf.open(info) as src, open(runtime / name, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    rec = catalog["recommended"]
+    entry = next(m for m in catalog["models"] if m["id"] == rec)
+    mdir = out / "models" / rec
+    shutil.rmtree(out / "models", ignore_errors=True)
+    mdir.mkdir(parents=True)
+    for role in ("model", "mmproj"):
+        f = entry["files"][role]
+        cached = fetch(f["url"], CACHE / "models" / f["file"])
+        verify(cached, f["sha256"])
+        shutil.copy2(cached, mdir / f["file"])
+    manifest = {
+        "runtime_build": rt["build"],
+        "models": {rec: {"name": entry["name"], "revision": entry["revision"],
+                         "license": entry.get("license", ""), "base": entry.get("base", ""),
+                         "files": {"model": entry["files"]["model"]["file"],
+                                   "mmproj": entry["files"]["mmproj"]["file"]},
+                         "server_args": entry.get("server_args") or []}},
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    shutil.copy2(ROOT.parent / "vision-models.json", out / "vision-models.json")
+    print(f"  -> {out}")
+
+
 def main() -> None:
     VENDOR.mkdir(exist_ok=True)
-    build_pandoc()
-    build_tesseract()
+    only = set(sys.argv[1:])
+    if not only or "pandoc" in only:
+        build_pandoc()
+    if not only or "tesseract" in only:
+        build_tesseract()
+    if not only or "vision" in only:
+        build_vision()
     print("Vendor programs ready.")
 
 

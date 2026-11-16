@@ -7,8 +7,9 @@
 ; Alt+N goes to the next page, Alt+B goes back and Enter activates the
 ; default button.
 ;
-; Pandoc and Tesseract OCR (with 17 OCR languages) are bundled in the
-; program folder, so everything works offline right after installing.
+; Pandoc, Tesseract OCR (with 17 OCR languages) and the picture-description
+; vision model (llama.cpp engine + Qwen3-VL 2B abliterated) are bundled in
+; the program folder, so everything works offline right after installing.
 ;
 ; Build with:  python packaging/build.py
 ; (it passes AppVersion, SourceDir, DocsDir and OutputDir with /D).
@@ -40,7 +41,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-AppComments=Accessible document converter with built-in pandoc and Tesseract OCR
+AppComments=Accessible document converter with built-in pandoc, Tesseract OCR and a local AI vision model
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 ; Install for the current user by default (no administrator prompt). The
@@ -70,7 +71,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "contextmenu"; Description: "Add ""Convert with Document Conversion Suite"" to the right-click menu (and Applications key menu) of PDF files"; GroupDescription: "Explorer integration:"
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "*.gguf"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The vision model files are already compressed; storing them as they are
+; keeps the build fast and the installer the same size.
+Source: "{#SourceDir}\vision\models\*"; DestDir: "{app}\vision\models"; Flags: ignoreversion recursesubdirs createallsubdirs nocompression
 Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\ACCESSIBILITY.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\FEATURES.md"; DestDir: "{app}\docs"; Flags: ignoreversion
@@ -79,7 +83,7 @@ Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "{#DocsDir}\*.html"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Convert PDFs and documents to accessible Markdown, HTML, Word, EPUB and more"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Convert PDFs and documents to accessible Markdown, HTML, Word, EPUB and more, with pictures described"
 Name: "{group}\Accessibility Guide"; Filename: "{app}\docs\ACCESSIBILITY.html"; Comment: "Accessibility features and keyboard shortcuts"
 Name: "{group}\Features Guide"; Filename: "{app}\docs\FEATURES.html"; Comment: "Everything Document Conversion Suite can do"
 Name: "{group}\Command Prompt for pdfmd-cli"; Filename: "{cmd}"; Parameters: "/k ""cd /d ""{app}"" && pdfmd-cli --help"""; WorkingDir: "{app}"; Comment: "Command prompt for the pdfmd-cli command-line converter"

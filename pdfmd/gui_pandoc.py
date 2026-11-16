@@ -41,6 +41,7 @@ class PandocDialog(wx.Dialog):
         pdf_converter: Callable[[Path, Path], None],
         announcer: Optional[Announcer] = None,
         out_dir: str = "",
+        vision_settings=None,
     ) -> None:
         super().__init__(parent, title="Convert Any Document with Pandoc", size=(820, 720),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
@@ -51,6 +52,8 @@ class PandocDialog(wx.Dialog):
         self.announcer = announcer or Announcer()
         self.files: List[str] = []
         self.out_dir_value = out_dir
+        self.vision_settings = vision_settings
+        self.describe_images = bool(vision_settings.enabled) if vision_settings is not None else False
         self._worker: Optional[threading.Thread] = None
         self.pandoc = ps.find_pandoc()
         self.in_formats = ps.list_input_formats(self.pandoc)
@@ -60,6 +63,9 @@ class PandocDialog(wx.Dialog):
         self._build()
         self._load(opts)
         self.add_files(initial_files)
+        self.describe_cb.SetValue(self.describe_images)
+        if vision_settings is None:
+            self.describe_cb.Hide()
         MnemonicHandler(self)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
         self.SetEscapeId(wx.ID_CLOSE)
@@ -124,6 +130,14 @@ class PandocDialog(wx.Dialog):
                  "When checked, each PDF you convert in the main window is also converted to the "
                  "output format chosen here, with these settings.")
         s1.Add(self.auto_cb, 0, wx.ALL, pad)
+
+        self.describe_cb = wx.CheckBox(p1, label="Describe pi&ctures with the local AI vision model")
+        describe(self.describe_cb,
+                 "Pictures without alternative text are described by the vision model on this "
+                 "computer. Word, EPUB, HTML, PowerPoint and other formats that can hold pictures "
+                 "get the description as alternative text; plain text and other text-only "
+                 "formats get it as a block quote. Alternative text the author wrote is kept.")
+        s1.Add(self.describe_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
 
         s1.Add(wx.StaticText(p1, label="Pandoc lo&g:"), 0, wx.LEFT | wx.TOP, pad)
         self.log = wx.TextCtrl(p1, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 110))
@@ -428,13 +442,22 @@ class PandocDialog(wx.Dialog):
         self.log.Clear()
         self._say(f"Converting {len(self.files)} file{'s' if len(self.files) != 1 else ''} "
                   f"to {ps.format_label(opts.to_format)}.")
-        self._worker = threading.Thread(target=self._run, args=(list(self.files), opts, out_dir),
+        vs = None
+        if self.vision_settings is not None and self.describe_cb.GetValue():
+            from dataclasses import replace
+
+            vs = replace(self.vision_settings, enabled=True, lang=self.ocr_lang)
+        self._worker = threading.Thread(target=self._run, args=(list(self.files), opts, out_dir, vs),
                                         daemon=True)
         self._worker.start()
         self._update_state()
 
-    def _run(self, files: List[str], opts: ps.PandocOptions, out_dir: str) -> None:
+    def _run(self, files: List[str], opts: ps.PandocOptions, out_dir: str, vs=None) -> None:
         ok, failed = 0, []
+        if vs is not None:
+            from . import vision
+
+            vision.hold()
         for f in files:
             src = Path(f)
             dest_dir = Path(out_dir) if out_dir else src.parent
@@ -448,18 +471,31 @@ class PandocDialog(wx.Dialog):
                     with tempfile.TemporaryDirectory() as tmp:
                         md = Path(tmp) / (src.stem + ".md")
                         self._log(f"Converting {src.name} to Markdown with pdfmd...")
-                        self.pdf_converter(src, md)
+                        if self._converter_takes_flag():
+                            self.pdf_converter(src, md, vs is not None)
+                        else:  # an older converter without the flag
+                            self.pdf_converter(src, md)
                         ps.convert(md, dest, opts, ocr_lang=self.ocr_lang, log_cb=self._log,
-                                   pandoc=self.pandoc)
+                                   pandoc=self.pandoc, vision=vs)
                 else:
                     ps.convert(src, dest, opts, ocr_lang=self.ocr_lang, log_cb=self._log,
-                               pandoc=self.pandoc)
+                               pandoc=self.pandoc, vision=vs)
                 ok += 1
                 self._last_output = dest
             except Exception as e:  # noqa: BLE001
                 failed.append(src.name)
                 self._log(f"Error converting {src.name}: {e}")
+        if vs is not None:
+            vision.release()
         wx.CallAfter(self._finished, ok, failed, len(files))
+
+    def _converter_takes_flag(self) -> bool:
+        import inspect
+
+        try:
+            return len(inspect.signature(self.pdf_converter).parameters) >= 3
+        except (TypeError, ValueError):
+            return False
 
     def _finished(self, ok: int, failed: List[str], total: int) -> None:
         if not self:
@@ -517,6 +553,7 @@ class PandocDialog(wx.Dialog):
         self.opts = self.collect()
         self.auto_export = self.auto_cb.GetValue()
         self.out_dir_value = self.out_dir.GetValue().strip()
+        self.describe_images = self.describe_cb.GetValue()
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:

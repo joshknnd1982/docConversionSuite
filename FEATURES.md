@@ -32,6 +32,7 @@ Version 1.7.1. For accessibility details and the full keyboard reference, see [A
 | Tables | Ruled, aligned and multi-block tables rebuilt with header rows, kept intact in Markdown, HTML and every pandoc format |
 | Accessible math | Offers MathJax when math is found (default Yes): spoken math, Braille, keyboard exploration |
 | Accessible HTML | Language-tagged, structured HTML copy with MathJax math |
+| Picture descriptions | A local AI vision model (Qwen3-VL 2B, abliterated, in llama.cpp) describes photos, charts, graphs, maps and diagrams in PDFs and every pandoc input format: alternative text, or a block quote for text-only output; GPU or CPU; describe whole photo folders into an album |
 | Pandoc | Convert from about 50 input formats to about 70 output formats: Word, EPUB, HTML, LaTeX, PDF, ODT, PowerPoint, reStructuredText, AsciiDoc, Typst, JATS, DocBook and more |
 | Pandoc options | Standalone, table of contents, numbering, math rendering, highlighting, wrapping, title, language, heading shift, citations (citeproc, bibliographies, CSL), reference documents, templates, Lua filters, PDF engines, and any other pandoc argument |
 | Accessible GUI | Native controls, labels, spoken descriptions, Tab order, menu bar, Alt keys, screen reader announcements |
@@ -97,8 +98,29 @@ File > Tesseract OCR (Ctrl+T), or Help > Check for Tesseract Updates:
 
 ### Images
 
-* **Export images**: saves the images in the PDF as PNG files in a `<name>_assets` folder next to the output and links them at the end of the Markdown, grouped by page, with alternative text such as "Image 1 from page 3".
+* **Export images**: saves the images in the PDF as PNG files in a `<name>_assets` folder next to the output. With picture descriptions on (the default), each described picture and drawn chart is saved where it appears in the text, with its description as alternative text. Other images (icons, logos, and every image when descriptions are off) are linked at the end of the Markdown, grouped by page, with alternative text such as "Image 1 from page 3".
 * Colour spaces (CMYK and others) are converted automatically.
+
+### Picture descriptions (local AI vision model)
+
+* **What is described**: embedded pictures (photos, scanned charts, maps, illustrations), charts drawn with vector graphics (most charts exported from Excel, matplotlib or R), and photo regions inside scanned pages. Tiny pictures (icons, bullets), logos repeated on most pages and pictures under a text layer are skipped.
+* **Pictures of text** (a scanned paragraph, a screenshot of a letter) are read with Tesseract OCR instead, and their text is added ("Text in image").
+* **Alternative text or block quote**: with Export images on, the description is the picture's alternative text: `![A bar chart of sales from 2021 to 2024...](report_assets/figure_001_02.png)`. With it off there is no picture in the output, so the description is written in the text: `> **Image description:** A bar chart of sales from 2021 to 2024...`.
+* **Charts**: axis labels just outside a drawn chart are included in what the model sees; the chart's caption is given to the model as context; when a chart is described, its stray axis labels are kept out of the text.
+* **Every document**: in the pandoc window and on the command line, Word, ODT, EPUB, PowerPoint, Jupyter, HTML, Markdown, LaTeX and other inputs are read with pandoc and every picture without useful alternative text is described. Formats that hold pictures (Word, EPUB, HTML, ODT, PowerPoint, PDF, LaTeX, Markdown...) get alternative text; text-only formats (plain text, man pages, spreadsheets...) get block quotes. Generic captions such as "image1" are removed. Remote pictures are never downloaded.
+* **Language**: descriptions are written in the OCR language you chose (for example German for `deu`).
+* **Model**: Qwen3-VL 2B Instruct, abliterated by huihui-ai (Apache-2.0), 4-bit GGUF, about 1.6 GB on disk and 3 GB of memory. Also offered: the official Qwen3-VL 2B Instruct, and a larger, more accurate Qwen3-VL 4B abliterated for computers with 16 GB of memory or a graphics card with 6 GB or more.
+* **Engine**: llama.cpp's llama-server (Vulkan build), started only while pictures are being described, listening only on 127.0.0.1 with a random port and access key, and stopped afterwards to free memory.
+* **Processor**: Automatic; **NVIDIA GPU with CUDA** (offered when an NVIDIA card is detected; the CUDA engine, about 710 MB, is downloaded with one button press and chosen for your driver: CUDA 13 or CUDA 12.4); **Any GPU with Vulkan** (NVIDIA, AMD, Intel, including integrated graphics; built in); one particular graphics processor; or **CPU only**. If CUDA fails, Vulkan is used; if the graphics processor fails, the CPU.
+* **Speed** (measured on a Ryzen 7 laptop): about 0.5 to 0.7 seconds per picture on an RTX 5060 with CUDA, 0.6 to 0.8 with Vulkan, 4 seconds on Radeon 780M integrated graphics, 5 to 7 seconds on the CPU alone.
+
+### Describe a folder of photos (Ctrl+D)
+
+* Choose a folder (optionally with subfolders) and **Web page (HTML)** or **Markdown**. Every photo (JPEG, PNG, HEIC from phones, WebP, TIFF, GIF, BMP, AVIF) gets a short title and a description of who and what is in it, the place, the time of day or season and the mood.
+* Photos are listed in the order they were taken (from the camera's date), with the date, time and camera model.
+* The web page has a heading per photo (screen reader users press H to move between photos), a contents list, the photo with its title as alternative text and the description as its caption, light and dark mode. Photos are linked, not copied.
+* Descriptions are remembered in a small file next to the page, so running it again only describes new or changed photos.
+* The command line does the same: `pdfmd-cli --describe-photos "C:\Photos\Italy" --album-format html`.
 
 ### Other engine features
 
@@ -201,12 +223,12 @@ The **Extra pandoc arguments** field gives access to every pandoc option, includ
 | Group | Controls |
 | --- | --- |
 | Input and output | Input PDF files list, Add PDFs, Remove Selected, Empty List, Output file or folder, Browse Output |
-| Conversion options | Profile, OCR mode, OCR language, Export images, Insert page breaks, Preview first 3 pages only, Remove repeating header and footer text, Promote uppercase lines to headings, Join short orphan lines into paragraphs, Heading size ratio, Orphan line width, When equations are found, Also save an accessible HTML copy |
+| Conversion options | Profile, OCR mode, OCR language, Export images, Insert page breaks, Preview first 3 pages only, Remove repeating header and footer text, Promote uppercase lines to headings, Join short orphan lines into paragraphs, Describe pictures with the local AI vision model, Heading size ratio, Orphan line width, When equations are found, Also save an accessible HTML copy |
 | Progress | Convert, Stop, Open Output Folder, progress bar, Conversion log |
 
 Other features:
 
-* **Menus**: File (add files, choose output, convert, stop, convert with pandoc, Tesseract OCR, open folder, open Markdown, open HTML, exit), Profiles (apply, save, delete, reset), View (theme, announcements, speak status), Help (keyboard shortcuts, check for Tesseract updates, about).
+* **Menus**: File (add files, choose output, convert, stop, convert with pandoc, Tesseract OCR, vision model, describe a folder of photos, open folder, open Markdown, open HTML, exit), Profiles (apply, save, delete, reset), View (theme, announcements, speak status), Help (keyboard shortcuts, check for Tesseract updates, check for vision model updates, about).
 * **Drag and drop** PDFs onto the window or the list.
 * **Open PDFs from Explorer** with "Convert with Document Conversion Suite", or pass PDF paths on the command line of `DocConversionSuite.exe`.
 * **Automatic output name**: one PDF goes to `<name>.md` next to it; several go to the first PDF's folder. Type or browse to change it.
@@ -220,11 +242,24 @@ Other features:
 
 Open it with **File > Convert Any Document with Pandoc** (Ctrl+P). It has three pages:
 
-1. **Files and format**: input files (any format, including PDF), input format, output format, output folder, the option to also export every PDF conversion from the main window, and the pandoc log.
+1. **Files and format**: input files (any format, including PDF), input format, output format, output folder, the option to also export every PDF conversion from the main window, **Describe pictures with the local AI vision model** (Alt+C), and the pandoc log.
 2. **Document options**: standalone, table of contents and depth, section numbering, embedded resources, math rendering, code highlighting, line wrapping, title, language, heading shift.
 3. **Citations, templates and filters**: citeproc, bibliography files, CSL style, reference document, template, filters, PDF engine, extra pandoc arguments.
 
 Output files are named after the input with the right extension; existing files are never overwritten (`_1`, `_2` are added). Settings are remembered.
+
+## 7a. The Vision Model window
+
+Open it with **File > Vision Model** (Ctrl+I) or **Help > Check for Vision Model Updates**.
+
+* **Status**: the engine version, the model in use, the graphics processors found, where the model will run, and any available update.
+* **Describe pictures in documents**: the same setting as the main window's check box.
+* **Processor**: Automatic, NVIDIA GPU with CUDA (when an NVIDIA card is found), Any GPU with Vulkan, Only *a particular graphics processor*, or CPU only.
+* **Model**: the default model, the official Qwen3-VL 2B, or the larger Qwen3-VL 4B (downloaded when you press Update).
+* **Check for Updates**: reads the small online model list ([vision-models.json](vision-models.json)).
+* **Update Vision Model** (Download Vision Model when something is missing): installs the newest engine and the selected model with one button press, and the NVIDIA CUDA engine when the processor is NVIDIA GPU with CUDA. Every file is checked against its published SHA-256 checksum. Updates go to `%LOCALAPPDATA%\DocConversionSuite\vision`; the built-in copy stays as a fallback.
+* **Test on a Picture**: describes a picture you choose and speaks the result.
+* **Remove Downloaded Model**: frees disk space (the built-in model stays).
 
 ## 8. Profiles and settings
 
@@ -260,6 +295,14 @@ pdfmd-cli [options] INPUT_PDF [INPUT_PDF ...]
 | `--html` | Also write an accessible HTML copy |
 | `--to FORMAT` | Also convert with pandoc to any pandoc output format |
 | `--pandoc-args ARGS` | Extra pandoc options in one quoted argument |
+| `--describe-images {auto,off}` | Describe pictures with the local vision model (default auto: when installed) |
+| `--vision-device DEVICE` | `auto`, `cuda` (NVIDIA CUDA), `vulkan` (any GPU; `gpu` means the same), `cpu`, or a device name from `--vision-status` such as `Vulkan1` |
+| `--vision-model ID` | Model to use or update (see `--vision-status`) |
+| `--vision-status` | Show the engine, installed models and graphics processors |
+| `--vision-update` | Download a newer engine or model (checksum-verified) |
+| `--describe-photos FOLDER` | Describe every photo in a folder into an album (`-o` sets the file) |
+| `--album-format {html,markdown}` | Album format (default html) |
+| `--recursive` | Include subfolders with `--describe-photos` |
 | `--no-progress` | No progress bar |
 | `-q, --quiet` | Only errors |
 | `-v, --verbose` | More detail (`-vv` for debug) |
@@ -275,7 +318,16 @@ pdfmd-cli scan.pdf --ocr auto --lang eng+deu
 pdfmd-cli calculus.pdf --mathjax yes --html
 pdfmd-cli thesis.pdf --to docx --pandoc-args "--toc --citeproc --bibliography refs.bib"
 pdfmd-cli *.pdf -o converted --to epub3
+pdfmd-cli report.pdf --export-images --vision-device gpu
+pdfmd-cli slides.pptx --to docx
+pdfmd-cli --describe-photos "C:\Photos\Italy 2026" --album-format markdown
+pdfmd-cli --vision-status
+pdfmd-cli --vision-update --vision-model huihui-qwen3-vl-4b-abliterated
+pdfmd-cli --vision-update --vision-device cuda
+pdfmd-cli report.pdf --vision-device cuda
 ```
+
+Inputs that aren't PDFs are converted with pandoc to `--to` (default GitHub Markdown), with their pictures described.
 
 ## 10. Python API
 
@@ -297,7 +349,7 @@ See [doc/API.md](doc/API.md) for the engine API.
 * Accessible Inno Setup wizard (standard controls, keyboard operable, screen reader friendly).
 * Installs for the current user without an administrator prompt; optional all-users install.
 * Start menu: Document Conversion Suite, Accessibility Guide, Features Guide, Command Prompt for pdfmd-cli, Uninstall.
-* Built in: pandoc 3.13, Tesseract OCR 5.4 and 17 OCR languages; nothing else to install.
+* Built in: pandoc 3.13, Tesseract OCR 5.4 and 17 OCR languages, and the vision model (llama.cpp b12441 with Qwen3-VL 2B Instruct, abliterated); nothing else to install.
 * Optional: desktop shortcut; "Convert with Document Conversion Suite" for PDF files in Explorer.
 * Licenses of bundled programs: `docs\THIRD-PARTY-NOTICES.txt`.
 * Documentation installed in the `docs` folder as Markdown and accessible HTML.
@@ -307,11 +359,13 @@ See [doc/API.md](doc/API.md) for the engine API.
 
 * No uploads, no telemetry, no cloud processing: every conversion runs on your computer.
 * PDF passwords are used only in memory, never logged, saved or passed on a command line.
-* Only reading converted HTML or Markdown with MathJax contacts the jsDelivr CDN, to load MathJax. Checking for Tesseract updates, installing Tesseract or pandoc, and downloading OCR languages contact GitHub (or winget's sources), and only when you ask.
+* Picture descriptions run on your computer: the vision engine listens only on 127.0.0.1, with a random port and access key, and only while it is describing pictures. Remote pictures in documents are never downloaded.
+* Only reading converted HTML or Markdown with MathJax contacts the jsDelivr CDN, to load MathJax. Checking for vision model updates reads vision-models.json from GitHub; updating downloads from github.com (llama.cpp) and huggingface.co (models), only when you ask. Checking for Tesseract updates, installing Tesseract or pandoc, and downloading OCR languages contact GitHub (or winget's sources), and only when you ask.
 
 ## 13. Requirements
 
-* Windows 10 or 11, 64-bit (installer). The engine and command line also run on macOS and Linux with Python 3.8+.
+* Windows 10 or 11, 64-bit (installer). The engine and command line also run on macOS and Linux with Python 3.8+ (`pdfmd --vision-update` downloads the llama.cpp build for your system: Metal on Apple silicon, Vulkan on Linux).
+* Picture descriptions: about 3 GB of free memory (8 GB of RAM in total is enough) and 2 GB of disk space; any 64-bit x64 processor; optional graphics processor (NVIDIA, AMD or Intel, through Vulkan, which comes with their drivers; NVIDIA also through CUDA, with driver 528 or newer and about 1.5 GB more disk space).
 * Included in the installer: Tesseract OCR and pandoc. Optional: OCRmyPDF for the OCRmyPDF mode; a PDF engine (for example a LaTeX distribution, Typst or WeasyPrint) for pandoc PDF output.
 * A screen reader is optional; announcements go to NVDA, JAWS, System Access, Dolphin, ZoomText, PC-Talker or ZDSR when one is running.
 
@@ -327,6 +381,9 @@ See [doc/API.md](doc/API.md) for the engine API.
 | Documentation | `docs\` in the program folder |
 | Settings | `%USERPROFILE%\.pdfmd_gui.json` |
 | Added OCR languages | `%LOCALAPPDATA%\DocConversionSuite\tessdata` |
+| Built-in vision engine and model | `vision\` in the program folder |
+| Updated or downloaded vision models, and the CUDA engine | `%LOCALAPPDATA%\DocConversionSuite\vision` |
+| Photo album descriptions cache | `<album file>.descriptions.json` next to the album |
 | Markdown output | Next to the PDF by default |
 | Accessible HTML | Next to the Markdown file, same name, `.html` |
 | Exported images | `<name>_assets` folder next to the Markdown file |

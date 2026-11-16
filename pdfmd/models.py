@@ -41,6 +41,27 @@ class Line:
 
 
 @dataclass
+class Figure:
+    """A picture or drawn chart on a page, described by the vision model.
+
+    ``status`` is "" until the describe stage runs, then one of:
+    "described" (``alt`` holds the description), "decorative", "text"
+    (a picture of text, left to OCR), "skipped" or "failed".
+    """
+    page: int = 0
+    bbox: tuple = (0.0, 0.0, 0.0, 0.0)
+    kind: str = "raster"                 # "raster" (embedded image) or "vector" (drawn chart)
+    xref: int = 0
+    png: bytes = b""                     # the figure as shown on the page
+    context: str = ""                    # nearby text, given to the model as a hint
+    native_words: int = 0                # PDF text inside the figure (labels)
+    labels: List["Block"] = field(default_factory=list)  # text inside a drawn chart
+    alt: str = ""
+    status: str = ""
+    asset: str = ""                      # relative path when images are exported
+
+
+@dataclass
 class Block:
     lines: List[Line] = field(default_factory=list)
     # Table metadata. These are real fields (not ad-hoc attributes) so that
@@ -49,8 +70,12 @@ class Block:
     table_grid: Optional[List[List[str]]] = None
     table_type: str = ""
     table_score: float = 0.0
+    # A picture or chart in the text flow (vision model descriptions).
+    figure: Optional[Figure] = None
 
     def is_empty(self) -> bool:
+        if self.figure is not None:
+            return False
         if self.is_table and self.table_grid:
             return False
         for ln in self.lines:
@@ -91,6 +116,13 @@ class PageText:
                     lines=[Line(spans=[Span(text=summary or "table", size=float(b.get("size", 0.0)))])],
                     is_table=True, table_grid=grid, table_type="ruled", table_score=10.0,
                 ))
+                continue
+            if b.get("type") == "pdfmd_figure":
+                fig = b["figure"]
+                labels = b.get("labels") or []
+                if labels:
+                    fig.labels = PageText.from_pymupdf({"blocks": labels}).blocks
+                blocks.append(Block(figure=fig))
                 continue
             if "lines" not in b:
                 # skip images and non-text blocks here
@@ -209,6 +241,13 @@ class Options:
     insert_page_breaks: bool = False
     export_images: bool = False
 
+    # Picture descriptions with the local vision model (see vision.py).
+    # When on, pictures and drawn charts get alternative text (exported
+    # images) or a block-quoted description (no images in the output).
+    describe_images: bool = False
+    vision_device: str = "auto"          # auto | gpu | cpu
+    vision_model: str = ""               # "" = recommended installed model
+
 
 # ------------------------------ Utilities ------------------------------
 def median_safe(vals: Iterable[int | float]) -> float:
@@ -226,6 +265,7 @@ __all__ = [
     "Span",
     "Line",
     "Block",
+    "Figure",
     "PageText",
     "Options",
     "median_safe",

@@ -11,8 +11,9 @@ Steps:
 2. Write the Windows version resource for the executables.
 3. Run PyInstaller (packaging/pdfmd.spec) -> dist/DocConversionSuite/ with DocConversionSuite.exe
    (GUI) and pdfmd-cli.exe (command line).
-4. Copy the bundled pandoc and Tesseract OCR (packaging/fetch_vendor.py
-   downloads and verifies them if they aren't there yet).
+4. Copy the bundled pandoc, Tesseract OCR and the vision model (llama.cpp
+   engine + default model; packaging/fetch_vendor.py downloads and verifies
+   them if they aren't there yet).
 5. Run Inno Setup (packaging/installer.iss) -> dist/installer/
    DocConversionSuite-<version>-setup.exe.
 
@@ -109,13 +110,18 @@ def main() -> None:
         check=True, cwd=ROOT,
     )
 
-    print("4. Adding bundled pandoc and Tesseract OCR")
+    print("4. Adding bundled pandoc, Tesseract OCR and the vision model")
     vendor = PKG / "vendor"
-    if not (vendor / "pandoc" / "pandoc.exe").is_file() or             not (vendor / "Tesseract-OCR" / "tesseract.exe").is_file():
-        subprocess.run([sys.executable, str(PKG / "fetch_vendor.py")], check=True, cwd=ROOT)
+    missing = [name for name, exe in (("pandoc", "pandoc/pandoc.exe"),
+                                      ("tesseract", "Tesseract-OCR/tesseract.exe"),
+                                      ("vision", "vision/runtime/llama-server.exe"))
+               if not (vendor / exe).is_file()]
+    if missing:
+        subprocess.run([sys.executable, str(PKG / "fetch_vendor.py"), *missing], check=True, cwd=ROOT)
     app_dir = DIST / "DocConversionSuite"
-    for name in ("pandoc", "Tesseract-OCR"):
+    for name in ("pandoc", "Tesseract-OCR", "vision"):
         shutil.copytree(vendor / name, app_dir / name, dirs_exist_ok=True)
+    shutil.copy2(ROOT / "vision-models.json", app_dir / "vision-models.json")
     shutil.copy2(PKG / "THIRD-PARTY-NOTICES.txt", app_dir / "THIRD-PARTY-NOTICES.txt")
 
     print("5. Running Inno Setup")

@@ -124,7 +124,8 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
         table rows, display math, code fences, HTML, rules, quotes, lists."""
         t = text.strip()
         return (
-            t.startswith(("#", "|", "$$", "```", "~~~", "<", ">", "---", "***", "- ", "* ", "+ "))
+            t.startswith(("#", "|", "$$", "```", "~~~", "<", ">", "---", "***", "- ", "* ", "+ ",
+                          "!["))
             or t.endswith("|")
             or bool(re.match(r"^\d+[.)]\s", t))
         )
@@ -380,6 +381,20 @@ def _block_to_lines(
       - average span font size vs body_size
       - optional ALL-CAPS / MOSTLY-CAPS heuristic across the block
     """
+    # Pictures and charts (vision model descriptions, see figures.py).
+    if block.figure is not None:
+        from .figures import figure_markdown
+
+        fig = block.figure
+        out = figure_markdown(fig)
+        if fig.status != "described":
+            # Not described: keep a drawn chart's labels as ordinary text.
+            for lbl in fig.labels:
+                if not lbl.is_empty():
+                    out.extend(_block_to_lines(lbl, body_size, caps_to_headings,
+                                               heading_size_ratio))
+        return out
+
     # Tables: if this block was annotated as a table in transform.py,
     # render it via the table grid and skip paragraph / heading heuristics.
     if getattr(block, "is_table", False) and getattr(block, "table_grid", None) is not None:
@@ -576,8 +591,8 @@ def render_document(
     # Strip common footer artefacts like trailing "- - 1" or "- -" at end of lines
     md = re.sub(r"\s*-+\s*-+\s*\d*\s*$", "", md, flags=re.MULTILINE)
 
-    # Tighten spaces before punctuation
-    md = re.sub(r"\s+([,.;:?!])", r"\1", md)
+    # Tighten spaces before punctuation ("!" that starts an image is left alone)
+    md = re.sub(r"\s+([,.;:?]|!(?!\[))", r"\1", md)
 
     return md
 

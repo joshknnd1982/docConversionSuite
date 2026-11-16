@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "updated": "2026-11-16",
+  "recommended": "huihui-qwen3-vl-2b-abliterated",
+  "runtime": {
+    "name": "llama.cpp",
+    "build": "b12441",
+    "license": "MIT",
+    "url_base": "https://github.com/ggml-org/llama.cpp/releases/download/b12441/",
+    "assets": {
+      "windows-x64": {
+        "file": "llama-b12441-bin-win-vulkan-x64.zip",
+        "sha256": "34ce5580c5e9273afa2b639e8d914357a070f6b707b74ba27fca45a29ede26c4",
+        "size": 38302070
+      },
+      "windows-arm64": {
+        "file": "llama-b12441-bin-win-vulkan-arm64.zip",
+        "sha256": "78551a37123397812c6a7762449b5d0a240e8f828ae9bb5d87b54dd4c8aa2111",
+        "size": 26215609
+      },
+      "macos-arm64": {
+        "file": "llama-b12441-bin-macos-arm64.tar.gz",
+        "sha256": "60cd8f23385a2f0548c4aed783472174f67c8ff2a1ba171b72a17223f9706d76",
+        "size": 17011848
+      },
+      "macos-x64": {
+        "file": "llama-b12441-bin-macos-x64.tar.gz",
+        "sha256": "41d99e4a198b85ea74a8e1e3dacb5e4fca812f555e3e8373cd20c32af2bbb71f",
+        "size": 12769064
+      },
+      "linux-x64": {
+        "file": "llama-b12441-bin-ubuntu-vulkan-x64.tar.gz",
+        "sha256": "618cae7b201969bd446d5cf71ca97ef81df9954affe014f4f5a12ae4db1e183d",
+        "size": 36399163
+      },
+      "linux-arm64": {
+        "file": "llama-b12441-bin-ubuntu-vulkan-arm64.tar.gz",
+        "sha256": "25aa762bdc247c17becdfbde93fb083c9546f0f52ef4a61ecafc7be40616cb9f",
+        "size": 29643023
+      }
+    },
+    "cuda": {
+      "cuda12": {
+        "label": "CUDA 12.4",
+        "requires": "NVIDIA GTX 900 series or newer; driver 528 or newer (Windows), 525 (Linux)",
+        "assets": {
+          "windows-x64": [
+            {
+              "file": "llama-b12441-bin-win-cuda-12.4-x64.zip",
+              "sha256": "6401a8dccd4895b5c883b2df65f8e7d7d9092b857ecba38403a305b4bc14dbfd",
+              "size": 320118864
+            },
+            {
+              "file": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+              "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+              "size": 391443627
+            }
+          ],
+          "linux-x64": [
+            {
+              "file": "llama-b12441-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "sha256": "fa045da495821f344351e79e3d2035bf1f5de6f64e16d1b165c363842ca11a57",
+              "size": 200105361
+            },
+            {
+              "file": "cudart-llama-b12441-bin-ubuntu-cuda-12.8-x64.tar.gz",
+              "sha256": "ffbd441887859ef089ce022ec9a523af37bab2f28f4be824bbd7e014fc84afea",
+              "size": 594376096
+            }
+          ]
+        }
+      },
+      "cuda13": {
+        "label": "CUDA 13.5",
+        "requires": "NVIDIA RTX 20 series or newer; driver 580 or newer",
+        "assets": {
+          "windows-x64": [
+            {
+              "file": "llama-b12441-bin-win-cuda-13.5-x64.zip",
+              "sha256": "59837b14273aff95e777b8430fde04fd9b1a48b6e6ebc89c441d275f408f6e46",
+              "size": 203534248
+            },
+            {
+              "file": "cudart-llama-bin-win-cuda-13.5-x64.zip",
+              "sha256": "c2bf4cc202bfbaaa7a0b75f5082457c3811326947bb216059b72839d844e9cba",
+              "size": 426314199
+            }
+          ],
+          "windows-arm64": [
+            {
+              "file": "llama-b12441-bin-win-cuda-13.5-arm64.zip",
+              "sha256": "924b50d1ed6d53965a1ffe09f2ecd15fa15fc38611e5b73b206a5b30b4956b29",
+              "size": 191111662
+            },
+            {
+              "file": "cudart-llama-bin-win-cuda-13.5-arm64.zip",
+              "sha256": "f89e7b2457f627d052dd99f42205ddfd01964454809754cdc649cffc74320dca",
+              "size": 278821062
+            }
+          ],
+          "linux-x64": [
+            {
+              "file": "llama-b12441-bin-ubuntu-cuda-13.5-x64.tar.gz",
+              "sha256": "93607aaebdc6a511dbefa7da691c43cca2b7df6a6ff292ed9cc80f22e7dd93ba",
+              "size": 202481971
+            },
+            {
+              "file": "cudart-llama-b12441-bin-ubuntu-cuda-13.5-x64.tar.gz",
+              "sha256": "b526fce2bec0804394a277de0039b608e2efd7c2593194bce4545f1e6f6044db",
+              "size": 444078563
+            }
+          ],
+          "linux-arm64": [
+            {
+              "file": "llama-b12441-bin-ubuntu-cuda-13.5-arm64.tar.gz",
+              "sha256": "80f4761a118fb41e9ae17405032da5c473436428aa1c021208223802c83694c0",
+              "size": 197524214
+            },
+            {
+              "file": "cudart-llama-b12441-bin-ubuntu-cuda-13.5-arm64.tar.gz",
+              "sha256": "05daad33404e04ef9c4e84d9d9d69f1f745f142c1fe13e58e7c2c2cf499b5450",
+              "size": 559872707
+            }
+          ]
+        }
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "huihui-qwen3-vl-2b-abliterated",
+      "name": "Qwen3-VL 2B Instruct, abliterated (Huihui)",
+      "description": "Default. Small and fast: runs on 8 GB laptops with integrated graphics and uses a GPU when you choose. Abliterated, so it describes any photo without refusing, while keeping Qwen3-VL's accuracy on photos, charts, maps and diagrams.",
+      "license": "Apache-2.0",
+      "base": "huihui-ai/Huihui-Qwen3-VL-2B-Instruct-abliterated (from Qwen/Qwen3-VL-2B-Instruct)",
+      "revision": "a12463c6c2296bf90a8ee89498af719d82e66332",
+      "ram_gb": 3,
+      "files": {
+        "model": {
+          "file": "Huihui-Qwen3-VL-2B-Instruct-abliterated.Q4_K_M.gguf",
+          "url": "https://huggingface.co/mradermacher/Huihui-Qwen3-VL-2B-Instruct-abliterated-GGUF/resolve/a12463c6c2296bf90a8ee89498af719d82e66332/Huihui-Qwen3-VL-2B-Instruct-abliterated.Q4_K_M.gguf",
+          "sha256": "7a50cd9e9b29fadbba374c27e94b458309e5e4245dfd1800d882167eada9f81b",
+          "size": 1107410784
+        },
+        "mmproj": {
+          "file": "Huihui-Qwen3-VL-2B-Instruct-abliterated.mmproj-Q8_0.gguf",
+          "url": "https://huggingface.co/mradermacher/Huihui-Qwen3-VL-2B-Instruct-abliterated-GGUF/resolve/a12463c6c2296bf90a8ee89498af719d82e66332/Huihui-Qwen3-VL-2B-Instruct-abliterated.mmproj-Q8_0.gguf",
+          "sha256": "6a3ddde4251c4961a552b3cd4d76c14141604708e70fc7f5354dddc0cec30d6c",
+          "size": 445053536
+        }
+      }
+    },
+    {
+      "id": "qwen3-vl-2b-instruct",
+      "name": "Qwen3-VL 2B Instruct (official)",
+      "description": "The original model from the Qwen team, same size and speed as the default. It may decline to describe some photos.",
+      "license": "Apache-2.0",
+      "base": "Qwen/Qwen3-VL-2B-Instruct",
+      "revision": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
+      "ram_gb": 3,
+      "files": {
+        "model": {
+          "file": "Qwen3VL-2B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/52d6c8ffea26cc873ac5ad116f8631268d7eb503/Qwen3VL-2B-Instruct-Q4_K_M.gguf",
+          "sha256": "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae",
+          "size": 1107409952
+        },
+        "mmproj": {
+          "file": "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/52d6c8ffea26cc873ac5ad116f8631268d7eb503/mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf",
+          "sha256": "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82",
+          "size": 445053216
+        }
+      }
+    },
+    {
+      "id": "huihui-qwen3-vl-4b-abliterated",
+      "name": "Qwen3-VL 4B Instruct, abliterated (Huihui), larger",
+      "description": "More detailed and accurate descriptions for computers with 16 GB of memory or more, best with a graphics card that has 6 GB or more. About 3 GB download.",
+      "license": "Apache-2.0",
+      "base": "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated (from Qwen/Qwen3-VL-4B-Instruct)",
+      "revision": "abf99adf548eb2aa6f9a3d56f976968996959e7f",
+      "ram_gb": 6,
+      "files": {
+        "model": {
+          "file": "Huihui-Qwen3-VL-4B-Instruct-abliterated.Q4_K_M.gguf",
+          "url": "https://huggingface.co/mradermacher/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF/resolve/abf99adf548eb2aa6f9a3d56f976968996959e7f/Huihui-Qwen3-VL-4B-Instruct-abliterated.Q4_K_M.gguf",
+          "sha256": "20d58872549c13f5476622d2385027e1b346298558822eca8aa33cb8846d5765",
+          "size": 2497282496
+        },
+        "mmproj": {
+          "file": "Huihui-Qwen3-VL-4B-Instruct-abliterated.mmproj-Q8_0.gguf",
+          "url": "https://huggingface.co/mradermacher/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF/resolve/abf99adf548eb2aa6f9a3d56f976968996959e7f/Huihui-Qwen3-VL-4B-Instruct-abliterated.mmproj-Q8_0.gguf",
+          "sha256": "cd4503cef5b48c55da5f04edd06e88f3c10344129f19bd9ebffdab32d0590a02",
+          "size": 453974624
+        }
+      }
+    }
+  ]
+}

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfmd"
-version = "1.7.1"
-description = "Accessible, privacy-first PDF to Markdown converter with OCR, table detection, accessible math (MathJax), pandoc export, and a screen-reader-friendly GUI"
+version = "1.8.0"
+description = "Accessible, privacy-first PDF to Markdown converter with OCR, table detection, accessible math (MathJax), pandoc export, local AI picture descriptions, and a screen-reader-friendly GUI"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
@@ -26,7 +26,11 @@ keywords = [
     "accessibility",
     "screen reader",
     "mathjax",
-    "pandoc"
+    "pandoc",
+    "alt text",
+    "image description",
+    "vision model",
+    "llama.cpp"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -65,6 +69,13 @@ ocrmypdf = [
     "ocrmypdf>=15.0.0",
 ]
 
+# Picture descriptions with the local vision model (the llama.cpp engine and
+# the model itself are separate downloads: pdfmd --vision-update)
+vision = [
+    "Pillow>=10.0.0",
+    "pillow-heif>=0.18",
+]
+
 # Accessible desktop GUI (wxPython, screen reader announcements)
 gui = [
     "wxPython>=4.2",
@@ -78,6 +89,7 @@ full = [
     "ocrmypdf>=15.0.0",
     "wxPython>=4.2",
     "accessible_output2>=0.17",
+    "pillow-heif>=0.18",
 ]
 
 # Development tools

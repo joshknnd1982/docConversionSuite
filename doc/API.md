@@ -275,6 +275,17 @@ Use `auto` for mixed PDFs, `tesseract` or `ocrmypdf` for fully scanned documents
 
 * If `True`, export images as `PNG` into a sidecar `*_assets/` folder next to the Markdown file, and append Markdown image references.
 * If `False` (default), images are ignored.
+* With `describe_images` on, pictures are exported where they appear, with their descriptions as alternative text.
+
+#### `describe_images: bool` (1.8.0)
+
+* If `True`, photos, charts, graphs, maps and diagrams are described by the local vision model (see section 6.4). Ignored, with a log message, when the vision engine or model isn't installed.
+* Default `False` in the API; the desktop app and the command line turn it on by default.
+
+#### `vision_device: str` and `vision_model: str` (1.8.0)
+
+* `vision_device`: `"auto"` (a graphics card if found, otherwise the CPU), `"gpu"` (any graphics processor, including integrated graphics), `"cpu"`, or `"dev:<name>"` for one particular device (names from `pdfmd --vision-status`).
+* `vision_model`: a model id from `vision-models.json`; `""` uses the recommended installed model.
 
 > **Note:** Additional internal fields may exist on `Options`. The ones listed here are the primary knobs expected to remain stable. Less common/experimental fields may change between versions.
 
@@ -430,6 +441,49 @@ pdf_to_markdown(pdf_path, str(md_path), options=opts)
 
 print(md_path.read_text(encoding="utf-8")[:2000])
 ```
+
+---
+
+## 6.4 Picture Descriptions (`pdfmd.vision`, 1.8.0)
+
+Pictures and charts are described by a local vision model when
+`Options.describe_images` is true and the engine and a model are installed:
+
+```python
+from pdfmd import Options, pdf_to_markdown
+
+opts = Options(ocr_mode="auto", export_images=True,
+               describe_images=True, vision_device="auto")   # "gpu", "cpu", "dev:Vulkan1"
+pdf_to_markdown("report.pdf", "report.md", opts)
+# Exported pictures get the description as alt text; without export_images
+# the description is written as "> **Image description:** ...".
+```
+
+Any document pandoc reads:
+
+```python
+from pdfmd import pandoc_support as ps, vision
+
+vs = vision.VisionSettings(enabled=True, device="auto", lang="eng")
+ps.convert("slides.pptx", "slides.docx", ps.PandocOptions(to_format="docx"), vision=vs)
+```
+
+One picture, or a folder of photos:
+
+```python
+from pdfmd import vision, album
+
+engine = vision.get_engine(vision.VisionSettings(device="gpu"))
+d = engine.describe("photo.jpg", purpose="photo")        # d.title, d.text, d.seconds
+d = engine.describe(png_bytes, purpose="document", context="Figure 2: Sales by year")
+album.describe_folder("C:/Photos/Italy", "C:/Photos/Italy/album.html", fmt="html")
+vision.shutdown()                                         # free the model's memory
+```
+
+Status and updates: `vision.find_runtime()`, `vision.installed_models()`,
+`vision.list_devices()`, `vision.fetch_catalog()`, `vision.plan_update(catalog)`,
+`vision.run_update(model_id)`. Set `PDFMD_LLAMA_SERVER` to use your own
+llama-server.
 
 ---
 

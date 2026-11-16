@@ -12,7 +12,7 @@ ROOT = Path(SPECPATH).parent  # noqa: F821 (SPECPATH is set by PyInstaller)
 datas, binaries, hiddenimports = [], [], []
 # accessible_output2 ships the NVDA / JAWS / Dolphin / ZoomText client DLLs
 # it uses to talk to screen readers.
-for pkg in ("accessible_output2", "libloader", "platform_utils"):
+for pkg in ("accessible_output2", "libloader", "platform_utils", "pillow_heif"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -22,6 +22,7 @@ hiddenimports += [
     "win32com", "win32com.client", "win32com.client.gencache", "pywintypes",
     "pytesseract", "PIL", "markdown", "markdown.extensions.tables",
     "markdown.extensions.fenced_code", "markdown.extensions.sane_lists",
+    "pillow_heif",
 ]
 
 common = dict(

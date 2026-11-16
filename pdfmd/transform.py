@@ -251,7 +251,7 @@ def remove_header_footer(
 
                 new_lines.append(ln)
 
-            if new_lines:
+            if new_lines or blk.figure is not None:
                 new_blocks.append(replace(blk, lines=new_lines))
 
         out_pages.append(replace(p, blocks=new_blocks))

@@ -16,6 +16,9 @@ keyboard alone:
   the running screen reader.
 - When a converted document contains math, pdfmd offers to enable MathJax
   so the math can be spoken, read in Braille and explored with the keyboard.
+- Photos, charts, graphs, maps and diagrams are described by a small local
+  AI vision model (alternative text, or a block-quoted description), and a
+  whole folder of photos can be described into an accessible album.
 
 Run as:
     python -m pdfmd.app_gui
@@ -69,6 +72,8 @@ try:
     from pdfmd.gui_pandoc import PandocDialog
     from pdfmd import tesseract_support as ts
     from pdfmd.gui_tesseract import TesseractDialog
+    from pdfmd import vision
+    from pdfmd.gui_vision import PhotoAlbumDialog, VisionDialog
 except ImportError:  # `python app_gui.py` from inside the package folder
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from pdfmd import __version__
@@ -81,6 +86,8 @@ except ImportError:  # `python app_gui.py` from inside the package folder
     from pdfmd.gui_pandoc import PandocDialog
     from pdfmd import tesseract_support as ts
     from pdfmd.gui_tesseract import TesseractDialog
+    from pdfmd import vision
+    from pdfmd.gui_vision import PhotoAlbumDialog, VisionDialog
 # ---------------------------------------------------------------------------
 
 APP_NAME = "Document Conversion Suite"
@@ -138,6 +145,7 @@ DEFAULT_OPTIONS: Dict[str, object] = {
     "orphan_len": 45,
     "math_mode": "ask",
     "html_copy": False,
+    "describe_images": True,
 }
 
 BUILTIN_PROFILES: Dict[str, Dict[str, object]] = {
@@ -204,6 +212,8 @@ Commands
   Ctrl+Shift+S        Speak the current status
   Ctrl+P              Convert with Pandoc (Word, EPUB, HTML, LaTeX and more)
   Ctrl+T              Tesseract OCR: install, update, add languages
+  Ctrl+I              Vision model: processor (GPU or CPU), model, updates
+  Ctrl+D              Describe a folder of photos (web page or Markdown)
   Ctrl+S              Save current settings as a profile
   Delete              Remove selected files (in the input list)
   F1                  This help
@@ -229,6 +239,7 @@ Go to a control (hold Alt)
   Alt+W   Orphan line width
   Alt+Q   When equations are found (MathJax)
   Alt+N   Also save an accessible HTML copy
+  Alt+4   Describe pictures with the local AI vision model
   Alt+C   Convert button
   Alt+S   Stop button
   Alt+D   Open Output Folder button
@@ -263,6 +274,27 @@ Tesseract OCR window (Ctrl+T)
   Alt+S status, Alt+U check for updates, Alt+I install or update,
   Alt+L installed languages, Alt+A add language, Alt+Q quality,
   Alt+D download language, Alt+C or Esc close
+
+Vision Model window (Ctrl+I)
+  Alt+S status, Alt+D describe pictures in documents, Alt+P processor
+  (automatic, NVIDIA GPU with CUDA, any GPU with Vulkan, one particular
+  graphics processor, or CPU only), Alt+M model, Alt+I model information, Alt+U check for
+  updates, Alt+V update (or download) vision model, Alt+T test on a
+  picture, Alt+R remove downloaded model, Alt+W stop download, Alt+L log,
+  Alt+C or Esc close
+
+Describe a Folder of Photos window (Ctrl+D)
+  Alt+F photo folder, Alt+B browse, Alt+A save as (web page or
+  Markdown), Alt+O output file, Alt+H choose file, Alt+U include
+  subfolders, Alt+W open when finished, Alt+D or F5 describe photos,
+  Alt+S stop, Alt+P open page, Alt+L log, Alt+C or Esc close
+
+Picture descriptions
+  Photos, charts, graphs, maps and diagrams are described by a small AI
+  model that runs on your computer. With Export images on, the description
+  becomes the picture's alternative text; otherwise it is written in the
+  text as a block quote starting "Image description". Pictures that are
+  mostly text get their recognised text instead.
 
 Accessible math
   When a converted document contains math, the suite offers to enable
@@ -348,6 +380,10 @@ class PdfMdFrame(wx.Frame):
         self.pandoc_auto = False
         self.pandoc_out_dir = ""
         self._last_pandoc_path: Optional[str] = None
+        self.pandoc_describe = True
+        self.vision_settings = vision.VisionSettings()
+        self.album_folder = ""
+        self.album_format = "html"
 
         self._build_menu()
         self._build_ui()
@@ -379,6 +415,7 @@ class PdfMdFrame(wx.Frame):
         self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} "
                                        f"{'(built in)' if ts.is_bundled(tess) else 'at ' + tess}" if tess
                   else "not installed. Scanned PDFs need it; press Ctrl+T to install it") + ".")
+        self._log_vision_status()
         wx.CallAfter(self.input_list.SetFocus)
 
     # ------------------------------------------------------------------ helpers
@@ -404,6 +441,12 @@ class PdfMdFrame(wx.Frame):
                                        "format pandoc supports")
         self.mi_tesseract = m_file.Append(wx.ID_ANY, "&Tesseract OCR (Install, Update, Languages)...\tCtrl+T",
                                           "Install or update Tesseract OCR and add OCR languages")
+        self.mi_vision = m_file.Append(wx.ID_ANY, "&Vision Model (Picture Descriptions)...\tCtrl+I",
+                                       "Choose GPU or CPU and the model that describes pictures, "
+                                       "and update it")
+        self.mi_album = m_file.Append(wx.ID_ANY, "&Describe a Folder of Photos...\tCtrl+D",
+                                      "Describe every photo in a folder into a web page or "
+                                      "Markdown file")
         m_file.AppendSeparator()
         self.mi_open_folder = m_file.Append(wx.ID_ANY, "Open Output &Folder\tCtrl+Shift+F",
                                             "Open the folder that contains the output")
@@ -453,6 +496,9 @@ class PdfMdFrame(wx.Frame):
                                           "List every keyboard shortcut")
         self.mi_tess_update = m_help.Append(wx.ID_ANY, "Check for &Tesseract Updates...",
                                             "Check online for a newer Tesseract OCR and install it")
+        self.mi_vision_update = m_help.Append(wx.ID_ANY, "Check for &Vision Model Updates...",
+                                              "Check online for a newer vision engine or model "
+                                              "and install it")
         self.mi_about = m_help.Append(wx.ID_ABOUT, "&About Document Conversion Suite", "Version and license information")
         mb.Append(m_help, "&Help")
 
@@ -469,6 +515,9 @@ class PdfMdFrame(wx.Frame):
         b(wx.EVT_MENU, lambda e: self._open_pandoc(), self.mi_pandoc)
         b(wx.EVT_MENU, lambda e: self._open_tesseract(), self.mi_tesseract)
         b(wx.EVT_MENU, lambda e: self._open_tesseract(check_now=True), self.mi_tess_update)
+        b(wx.EVT_MENU, lambda e: self._open_vision(), self.mi_vision)
+        b(wx.EVT_MENU, lambda e: self._open_vision(check_now=True), self.mi_vision_update)
+        b(wx.EVT_MENU, lambda e: self._open_album(), self.mi_album)
         b(wx.EVT_MENU, lambda e: self.Close(), id=wx.ID_EXIT)
         b(wx.EVT_MENU, lambda e: self._save_profile_dialog(), self.mi_save_profile)
         b(wx.EVT_MENU, lambda e: self._delete_profile(), self.mi_delete_profile)
@@ -580,8 +629,14 @@ class PdfMdFrame(wx.Frame):
         self._describe(self.defrag_cb,
                        "Merge short isolated lines into the previous paragraph so text reads "
                        "smoothly.")
+        self.describe_cb = wx.CheckBox(obox, label="Describe pictures with the local AI vision model (&4)")
+        self._describe(self.describe_cb,
+                       "Photos, charts, graphs, maps and diagrams are described by a small AI model "
+                       "running on this computer. With Export images on, the description becomes "
+                       "each picture's alternative text; otherwise it is written as a block quote. "
+                       "Choose GPU or CPU, and update the model, with Ctrl+I.")
         for cb in (self.export_images_cb, self.page_breaks_cb, self.preview_cb,
-                   self.rm_edges_cb, self.caps_cb, self.defrag_cb):
+                   self.rm_edges_cb, self.caps_cb, self.defrag_cb, self.describe_cb):
             checks.Add(cb, 0)
         opts_sb.Add(checks, 0, wx.EXPAND | wx.ALL, pad)
 
@@ -717,6 +772,15 @@ class PdfMdFrame(wx.Frame):
             self.pandoc_opts = ps.PandocOptions.from_dict(pandoc.get("options", {}))
             self.pandoc_auto = bool(pandoc.get("auto_export", False))
             self.pandoc_out_dir = str(pandoc.get("out_dir", "") or "")
+            self.pandoc_describe = bool(pandoc.get("describe_images", True))
+
+        vis = data.get("vision")
+        if isinstance(vis, dict):
+            self.vision_settings = vision.VisionSettings.from_dict(vis)
+        alb = data.get("album")
+        if isinstance(alb, dict):
+            self.album_folder = str(alb.get("folder", "") or "")
+            self.album_format = "markdown" if alb.get("format") == "markdown" else "html"
 
         size = data.get("window_size")
         if isinstance(size, list) and len(size) == 2:
@@ -740,7 +804,10 @@ class PdfMdFrame(wx.Frame):
                 "options": self.pandoc_opts.to_dict(),
                 "auto_export": self.pandoc_auto,
                 "out_dir": self.pandoc_out_dir,
+                "describe_images": self.pandoc_describe,
             },
+            "vision": self.vision_settings.to_dict(),
+            "album": {"folder": self.album_folder, "format": self.album_format},
         }
         try:
             CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -757,7 +824,7 @@ class PdfMdFrame(wx.Frame):
     def _log(self, msg: str) -> None:
         """Thread-safe log appender that never moves the reader's caret."""
         def append() -> None:
-            if not self:
+            if not self or not self.log_text:
                 return
             focused = wx.Window.FindFocus() is self.log_text
             if focused:
@@ -1040,6 +1107,7 @@ class PdfMdFrame(wx.Frame):
             "orphan_len": int(self.orphan_spin.GetValue()),
             "math_mode": MATH_CODES[max(0, self.math_choice.GetSelection())],
             "html_copy": self.html_cb.GetValue(),
+            "describe_images": self.describe_cb.GetValue(),
         }
 
     def _apply_options_dict(self, opts: dict) -> None:
@@ -1072,6 +1140,7 @@ class PdfMdFrame(wx.Frame):
         math_mode = o.get("math_mode")
         self.math_choice.SetSelection(MATH_CODES.index(math_mode) if math_mode in MATH_CODES else 0)
         self.html_cb.SetValue(bool(o.get("html_copy", False)))
+        self.describe_cb.SetValue(bool(o.get("describe_images", True)))
 
     # ---------------------------------------------------------------- convert
     @staticmethod
@@ -1296,6 +1365,7 @@ class PdfMdFrame(wx.Frame):
         final_status = ""
         error_dialog: Optional[Tuple[str, str]] = None
 
+        vision.hold()
         try:
             for job_idx, (inp, outp) in enumerate(jobs):
                 if self._cancel.is_set():
@@ -1330,7 +1400,7 @@ class PdfMdFrame(wx.Frame):
                     self._postprocess_math(outp, opts, math_mode, html_copy, batch_answer,
                                            remaining=total_jobs - job_idx - 1)
                     if self.pandoc_auto:
-                        self._pandoc_export(outp, opts.ocr_lang)
+                        self._pandoc_export(outp, opts.ocr_lang, opts.describe_images)
                 except UserCancelled:
                     raise
                 except Exception as e:
@@ -1364,6 +1434,9 @@ class PdfMdFrame(wx.Frame):
             final_status = f"Conversion stopped. {successes} of {total_jobs} files converted."
         finally:
             passwords.clear()
+            # Free the vision model's memory between batches (important on
+            # computers with 8 GB of memory), unless another window uses it.
+            vision.release()
             wx.CallAfter(self._on_finished, final_status, error_dialog,
                          100 if not self._cancel.is_set() else None)
 
@@ -1412,8 +1485,7 @@ class PdfMdFrame(wx.Frame):
             self._error("Could Not Open", f"Could not open:\n{path}\n\n{e}")
 
     # ----------------------------------------------------------------- pandoc
-    @staticmethod
-    def _engine_options(o: dict) -> Options:
+    def _engine_options(self, o: dict) -> Options:
         return Options(
             ocr_mode=o["ocr_mode"],
             ocr_lang=o["ocr_lang"],
@@ -1425,6 +1497,9 @@ class PdfMdFrame(wx.Frame):
             remove_headers_footers=o["rm_edges"],
             insert_page_breaks=o["page_breaks"],
             export_images=o["export_images"],
+            describe_images=bool(o.get("describe_images", True)),
+            vision_device=self.vision_settings.device,
+            vision_model=self.vision_settings.model_id,
         )
 
     def _open_pandoc(self) -> None:
@@ -1435,21 +1510,28 @@ class PdfMdFrame(wx.Frame):
         o = self._options_from_controls()
         engine_opts = self._engine_options(o)
 
-        def pdf_converter(src: Path, dest_md: Path) -> None:
+        def pdf_converter(src: Path, dest_md: Path, describe: Optional[bool] = None) -> None:
             # Runs on the pandoc dialog's worker thread.
-            pdf_to_markdown(str(src), str(dest_md), engine_opts)
+            from dataclasses import replace
+
+            eo = engine_opts if describe is None else replace(engine_opts, describe_images=describe)
+            pdf_to_markdown(str(src), str(dest_md), eo)
 
         initial: List[str] = []
         if self._last_output_path and Path(self._last_output_path).is_file():
             initial.append(self._last_output_path)
         else:
             initial.extend(self._input_paths)
+        vs = vision.VisionSettings(enabled=self.pandoc_describe, device=self.vision_settings.device,
+                                   model_id=self.vision_settings.model_id, lang=o["ocr_lang"])
         dlg = PandocDialog(self, self.pandoc_opts, self.pandoc_auto, initial, o["ocr_lang"],
-                           pdf_converter, announcer=self.announcer, out_dir=self.pandoc_out_dir)
+                           pdf_converter, announcer=self.announcer, out_dir=self.pandoc_out_dir,
+                           vision_settings=vs)
         dlg.ShowModal()
         self.pandoc_opts = dlg.opts
         self.pandoc_auto = dlg.auto_export
         self.pandoc_out_dir = dlg.out_dir_value
+        self.pandoc_describe = dlg.describe_images
         dlg.Destroy()
         self._save_config()
         if self.pandoc_auto:
@@ -1457,7 +1539,7 @@ class PdfMdFrame(wx.Frame):
                 f"PDF conversions will also be exported to "
                 f"{ps.format_label(self.pandoc_opts.to_format)}.", announce=False)
 
-    def _pandoc_export(self, md_path: Path, ocr_lang: str) -> None:
+    def _pandoc_export(self, md_path: Path, ocr_lang: str, describe: bool = True) -> None:
         """Worker thread: export a converted Markdown file with pandoc."""
         pandoc = ps.find_pandoc()
         if not pandoc:
@@ -1470,7 +1552,10 @@ class PdfMdFrame(wx.Frame):
         if dest == md_path:
             dest = dest_dir / (md_path.stem + "_pandoc" + ps.output_extension(o.to_format))
         try:
-            ps.convert(md_path, dest, o, ocr_lang=ocr_lang, log_cb=self._log, pandoc=pandoc)
+            vs = vision.VisionSettings(enabled=describe, device=self.vision_settings.device,
+                                       model_id=self.vision_settings.model_id, lang=ocr_lang)
+            ps.convert(md_path, dest, o, ocr_lang=ocr_lang, log_cb=self._log, pandoc=pandoc,
+                       vision=vs)
             self._last_pandoc_path = str(dest)
             self._log(f"Pandoc export: {os_display_path(dest)}")
         except Exception as e:  # noqa: BLE001
@@ -1487,6 +1572,56 @@ class PdfMdFrame(wx.Frame):
         tess = ts.configure()
         self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} at {tess}."
                                        if tess else "not installed."))
+
+    # ----------------------------------------------------------------- vision
+    def _log_vision_status(self) -> None:
+        rt = vision.find_runtime()
+        model = vision.resolve_model(self.vision_settings.model_id)
+        if rt and model:
+            where = "built in" if model.source == "bundled" else "downloaded"
+            cuda = vision.find_cuda_runtime()
+            engines = "Vulkan" + (" and CUDA" if cuda else "")
+            self._log(f"Vision model: {model.name} ({where}), llama.cpp {rt.build} ({engines}). "
+                      "Pictures are described on this computer; press Ctrl+I to choose CUDA, "
+                      "Vulkan or CPU, or to update it.")
+        else:
+            self._log("Vision model: not installed; pictures are not described. Press Ctrl+I "
+                      "to download it.")
+
+    def _open_vision(self, check_now: bool = False) -> None:
+        if self._busy():
+            self._set_status("Wait for the current conversion to finish.", interrupt=True)
+            return
+        self.vision_settings.enabled = self.describe_cb.GetValue()
+        self.vision_settings.lang = self._lang_code()
+        dlg = VisionDialog(self, self.vision_settings, announcer=self.announcer, check_now=check_now)
+        dlg.ShowModal()
+        self.vision_settings = dlg.settings
+        dlg.Destroy()
+        self.describe_cb.SetValue(self.vision_settings.enabled)
+        self._save_config()
+        self._log_vision_status()
+
+    def _open_album(self) -> None:
+        if self._busy():
+            self._set_status("Wait for the current conversion to finish.", interrupt=True)
+            return
+        vs = vision.VisionSettings(enabled=True, device=self.vision_settings.device,
+                                   model_id=self.vision_settings.model_id, lang=self._lang_code())
+        if not vision.available(vs):
+            if wx.MessageBox("The vision model is not installed yet. Open the Vision Model window "
+                             "to download it?", "Vision Model Needed",
+                             wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION, self) == wx.YES:
+                self._open_vision()
+            if not vision.available(vs):
+                return
+        dlg = PhotoAlbumDialog(self, vs, announcer=self.announcer, folder=self.album_folder,
+                               fmt=self.album_format)
+        dlg.ShowModal()
+        self.album_folder = dlg.folder_text.GetValue().strip()
+        self.album_format = "markdown" if dlg.format_choice.GetSelection() == 1 else "html"
+        dlg.Destroy()
+        self._save_config()
 
     def _check_ocr_ready(self, inputs: List[Path]) -> bool:
         """Return False to cancel the conversion."""
@@ -1587,8 +1722,9 @@ class PdfMdFrame(wx.Frame):
             f"Document Conversion Suite {__version__}\n\n"
             "Accessible document converter: PDF to Markdown with OCR, table detection and "
             "accessible math (MathJax), plus conversion between every format pandoc "
-            "supports.\n\n"
-            "Built on the pdfmd PDF engine and pandoc (pandoc.org).\n\n"
+            "supports, and picture descriptions by a local AI vision model.\n\n"
+            "Built on the pdfmd PDF engine, pandoc (pandoc.org) and llama.cpp. The default "
+            "vision model is Qwen3-VL 2B Instruct, abliterated (Apache-2.0).\n\n"
             "All conversion happens on your computer. Nothing is uploaded.\n\n"
             "Licensed under the MIT License. Pandoc is licensed under the GPL.",
             "About Document Conversion Suite", wx.OK | wx.ICON_INFORMATION, self)
@@ -1615,6 +1751,7 @@ class PdfMdFrame(wx.Frame):
                 return
             self._cancel.set()
         self._save_config()
+        vision.shutdown()
         self.Destroy()
 
 

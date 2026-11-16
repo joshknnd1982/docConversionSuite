@@ -455,6 +455,14 @@ def split_args(text: str) -> List[str]:
     return list(lex)
 
 
+# Input formats that carry their pictures inside the file (pandoc keeps them
+# in its media bag, which the JSON document doesn't contain).
+CONTAINER_INPUTS = ("docx", "odt", "epub", "epub2", "epub3", "pptx", "ipynb", "rtf", "fb2",
+                    "xlsx", "docbook", "docbook4", "docbook5", "jats", "bits")
+# Options that belong to the writer pass only.
+_WRITER_ONLY = {"-o", "--output", "-t", "--to", "-w", "--write", "-f", "--from", "-r", "--read"}
+
+
 def convert(
     input_path: str | Path,
     output_path: str | Path,
@@ -462,8 +470,14 @@ def convert(
     ocr_lang: Optional[str] = None,
     log_cb: Logger = None,
     pandoc: Optional[str] = None,
+    vision=None,
 ) -> Path:
-    """Convert one file with pandoc. Raises RuntimeError on failure."""
+    """Convert one file with pandoc. Raises RuntimeError on failure.
+
+    ``vision`` (a ``vision.VisionSettings``) turns on picture descriptions:
+    pictures without alternative text are described by the local vision
+    model (see docimages.py).
+    """
     pandoc = pandoc or find_pandoc()
     if not pandoc:
         raise RuntimeError(
@@ -487,6 +501,16 @@ def convert(
             stdin_text = prepared
             from_format = from_format or "markdown"
 
+    if vision is not None and getattr(vision, "enabled", False):
+        from . import vision as _vision
+
+        if _vision.available(vision):
+            return _convert_with_descriptions(pandoc, input_path, output_path, opts, from_format,
+                                              stdin_text, ocr_lang, log_cb, vision)
+        if log_cb:
+            log_cb("[vision] Picture descriptions skipped: "
+                   + _vision.unavailable_reason(vision) + ".")
+
     args = build_args(pandoc, input_path, output_path, opts, from_format, ocr_lang)
     if stdin_text is None:
         args.append(str(input_path))
@@ -500,6 +524,98 @@ def convert(
             log_cb(f"[pandoc] {line}")
     if proc.returncode != 0:
         raise RuntimeError(err or f"pandoc exited with code {proc.returncode}")
+    if log_cb:
+        log_cb(f"[pandoc] Saved → {output_path}")
+    return output_path
+
+
+def _convert_with_descriptions(pandoc: str, input_path: Path, output_path: Path,
+                               opts: PandocOptions, from_format: Optional[str],
+                               stdin_text: Optional[str], ocr_lang: Optional[str],
+                               log_cb: Logger, vision) -> Path:
+    """Read the document as pandoc JSON, describe its pictures, then write it."""
+    import json
+    import tempfile
+
+    from . import docimages
+
+    to = opts.to_format or "html"
+    base_to = re.split(r"[+-]", to, maxsplit=1)[0]
+    with tempfile.TemporaryDirectory(prefix="pdfmd-pandoc-") as tmp:
+        tmpdir = Path(tmp)
+        # Pictures inside Word, ODT, EPUB, PowerPoint and notebooks are
+        # extracted: next to the output for text outputs (which link to
+        # them), or to a temporary folder for binary outputs (which embed
+        # them).
+        read = [pandoc]
+        if from_format:
+            read += ["--from", from_format]
+        read += ["--to", "json"]
+        base_dirs = [input_path.parent]
+        base_from = re.split(r"[+-]", from_format or "", maxsplit=1)[0] or \
+            {".rtf": "rtf", ".fb2": "fb2"}.get(input_path.suffix.lower(), "")
+        if base_from in CONTAINER_INPUTS:
+            if opts.extract_media and base_to not in BINARY_OUTPUTS:
+                media = output_path.parent / (output_path.stem + "_media")
+            else:
+                media = tmpdir / "media"
+            read += ["--extract-media", str(media)]
+            base_dirs.append(media)
+        read += ["--resource-path", os.pathsep.join([str(input_path.parent), "."])]
+        # Reader options in the extra arguments (for example
+        # --track-changes=all) must reach this pass too.
+        extra = split_args(opts.extra_args) if opts.extra_args.strip() else []
+        k = 0
+        while k < len(extra):
+            a = extra[k]
+            name = a.split("=", 1)[0]
+            if name in _WRITER_ONLY:
+                k += 1 if "=" in a else 2
+                continue
+            read.append(a)
+            k += 1
+        if stdin_text is None:
+            read.append(str(input_path))
+        proc = _run(read, input_text=stdin_text, cwd=str(input_path.parent))
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip()
+                               or f"pandoc exited with code {proc.returncode}")
+        ast = json.loads(proc.stdout.decode("utf-8"))
+
+        vs = vision
+        if not getattr(vs, "lang", ""):
+            vs.lang = ocr_lang or "eng"
+        try:
+            n = docimages.describe_ast(ast, to, base_dirs, vs, log_cb=log_cb)
+            if log_cb and n:
+                log_cb(f"[vision] Described {n} picture{'s' if n != 1 else ''}.")
+        except Exception as e:  # noqa: BLE001  (never fail a conversion over pictures)
+            if log_cb:
+                log_cb(f"[vision] Picture descriptions skipped: {e}")
+
+        doc_json = tmpdir / "document.json"
+        extra = []
+        if (tmpdir / "media").is_dir():
+            # Pictures extracted to the temporary folder are embedded in the
+            # output; refer to them by a short relative path so no temporary
+            # folder name ends up inside the document.
+            docimages.relocate_sources(ast.get("blocks", []), str(tmpdir / "media"), "media/")
+            extra = ["--resource-path",
+                     os.pathsep.join([str(tmpdir), str(input_path.parent), "."])]
+        doc_json.write_text(json.dumps(ast), encoding="utf-8")
+        args = build_args(pandoc, input_path, output_path, opts, "json", ocr_lang)
+        args += extra
+        args.append(str(doc_json))
+        if log_cb:
+            shown = [Path(a).name if i == 0 else a for i, a in enumerate(args)]
+            log_cb("[pandoc] " + " ".join(shlex.quote(a) for a in shown))
+        proc = _run(args, cwd=str(input_path.parent))
+        err = proc.stderr.decode("utf-8", "replace").strip()
+        if err and log_cb:
+            for line in err.splitlines():
+                log_cb(f"[pandoc] {line}")
+        if proc.returncode != 0:
+            raise RuntimeError(err or f"pandoc exited with code {proc.returncode}")
     if log_cb:
         log_cb(f"[pandoc] Saved → {output_path}")
     return output_path

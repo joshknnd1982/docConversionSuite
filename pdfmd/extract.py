@@ -222,10 +222,21 @@ def _extract_native(
         limit = total if not options.preview_only else min(3, total)
         out: List[PageText] = []
 
+        repeated = set()
+        if options.describe_images:
+            from .figures import repeated_images
+            repeated = repeated_images(doc, limit)
+
         for i in range(limit):
             page = doc.load_page(i)
             info = page.get_text("dict")
             info = _with_ruled_tables(page, info)
+            if options.describe_images:
+                from .figures import add_figures
+                try:
+                    info = add_figures(page, info, i, repeated)
+                except Exception as e:  # never fail a conversion over a picture
+                    log(f"[extract] Could not look for pictures on page {i + 1}: {e}")
             out.append(PageText.from_pymupdf(info))
 
             if progress_cb:
@@ -412,7 +423,8 @@ def _extract_tesseract(
                 raise RuntimeError("Unexpected: pixmap missing tobytes()")
 
             png_bytes = pix.tobytes("png")
-            img = _erase_ruling_lines(Image.open(io.BytesIO(png_bytes)))
+            original = Image.open(io.BytesIO(png_bytes))
+            img = _erase_ruling_lines(original)
 
             # Let pytesseract detect layout at word/line level
             data = pytesseract.image_to_data(
@@ -420,7 +432,15 @@ def _extract_tesseract(
                 lang=options.ocr_lang or "eng",
                 output_type=pytesseract.Output.DICT,
             )
-            out.append(PageText.from_tesseract_data(data))
+            page_text = PageText.from_tesseract_data(data)
+            if options.describe_images:
+                # Photos and illustrations on the scanned page.
+                from .figures import add_scanned_figures
+                try:
+                    page_text = add_scanned_figures(page_text, data, original, i)
+                except Exception as e:
+                    log(f"[extract] Could not look for pictures on page {i + 1}: {e}")
+            out.append(page_text)
 
             if progress_cb:
                 progress_cb(i + 1, total)

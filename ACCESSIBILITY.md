@@ -62,7 +62,8 @@ Spoken status announcements are sent directly to the running screen reader (NVDA
 | Accessible math with MathJax | When a document contains math, the program offers to enable MathJax (the default answer is Yes). MathJax 4 turns every expression into accessible math: screen readers speak it in natural language ("a squared plus b squared equals c squared"), it is available as Nemeth or UEB Braille, and you can explore complex expressions piece by piece with the arrow keys. |
 | Math found inside sentences | Math written in normal sentences, such as "E = mc²", "α + β³ = γ" or "xᵢ ≥ 0", is detected and converted to proper math, so it is spoken as math and not as a string of symbols. Prices such as "$5 and $10" are left alone. |
 | Accessible HTML copy | An HTML version is saved next to the Markdown file. It declares the document language (so screen readers use the right voice), keeps the heading structure, uses real table header cells, has a "Skip to content" link and a main landmark, and contains MathJax math. |
-| Descriptive image text | Exported images are linked with alternative text such as "Image 2 from page 5" instead of a code like "p5-2". |
+| Pictures are described | A small AI vision model running on your computer describes photos, charts, graphs, maps and diagrams. With Export images on, the description is the picture's alternative text, read by screen readers. Otherwise the description is written in the text as a block quote starting "Image description", so you meet it while reading. Pictures of text get their recognised text ("Text in image"). Word, EPUB, HTML, PowerPoint and other documents converted with pandoc get alternative text for pictures that have none. |
+| Photo albums | Describe a Folder of Photos (Ctrl+D) writes a web page with a heading per photo (press H in your screen reader to move from photo to photo), the photo's title as its alternative text and the full description as its caption, or a Markdown file. |
 | Pandoc output | Converting with pandoc uses accessible math for each format: MathJax for HTML and slides, MathML for EPUB, and native equations for Word, OpenDocument and PowerPoint, which Word's own accessibility tools and screen readers can read. The document language is always set. |
 | Scanned PDFs become text | Auto OCR (the default) recognises scanned pages with Tesseract, turning image-only PDFs into accessible text. |
 | Real headings and tables | The engine detects headings from font sizes and rebuilds tables with header rows, so documents can be navigated by heading and by table. Ruled tables are read from the lines drawn in the PDF, so every row, column and header survives. |
@@ -164,6 +165,46 @@ Open it with **Ctrl+T** (File > Tesseract OCR) or Help > Check for Tesseract Upd
 
 Installing uses the Windows Package Manager (winget) in a console window your screen reader can read; without winget the official installer is downloaded from GitHub and started.
 
+### 1.7a Keyboard reference: Vision Model window
+
+Open it with **Ctrl+I** (File > Vision Model) or Help > Check for Vision Model Updates. Focus starts in the Status field. Downloads show progress, announce every 25 percent, and can be stopped.
+
+| Key | Control |
+| --- | --- |
+| Alt+S | Status (read-only text) |
+| Alt+D | Describe pictures in documents (check box) |
+| Alt+P | Processor: Automatic, NVIDIA GPU with CUDA (shown when an NVIDIA card is found; says whether the CUDA engine is installed), Any GPU with Vulkan, Only a particular graphics processor, CPU only. Choosing CUDA before its engine is installed announces how to download it |
+| Alt+M | Model |
+| Alt+I | Model information (read-only text) |
+| Alt+U | Check for Updates |
+| Alt+V | Update Vision Model (or Download Vision Model) |
+| Alt+T | Test on a Picture (the description is spoken and added to the log) |
+| Alt+R | Remove Downloaded Model |
+| Alt+W | Stop Download |
+| Alt+L | Log |
+| Alt+C or Esc | Close |
+
+### 1.7b Keyboard reference: Describe a Folder of Photos window
+
+Open it with **Ctrl+D** (File > Describe a Folder of Photos). Each photo's description is added to the log as it is written; progress is announced every 25 percent.
+
+| Key | Control |
+| --- | --- |
+| Alt+F | Photo folder |
+| Alt+B | Browse for the folder (the number of photos is announced) |
+| Alt+A | Save as: Web page (HTML) or Markdown |
+| Alt+O | Output file |
+| Alt+H | Choose File |
+| Alt+U | Include photos in subfolders |
+| Alt+W | Open the page when finished |
+| Alt+D or F5 | Describe Photos |
+| Alt+S | Stop (after the current photo) |
+| Alt+P | Open Page |
+| Alt+L | Log |
+| Alt+C or Esc | Close |
+
+In the main window, **Alt+4** toggles **Describe pictures with the local AI vision model**. In the pandoc window, **Alt+C** toggles the same option for pandoc conversions.
+
 ### 1.8 Accessible installer
 
 The installer is built with Inno Setup and uses only standard Windows controls, so NVDA, JAWS and Narrator read every page. Operate it with Tab, Shift+Tab, Space (check boxes), the arrow keys (radio buttons), **Alt+N** (Next), **Alt+B** (Back) and Enter.
@@ -175,7 +216,7 @@ It installs for the current user without an administrator prompt; you can choose
 * The progress bar is not a Tab stop (Windows progress bars never are). Progress is announced, shown in the status bar, and available with Ctrl+Shift+S.
 * For the two spin boxes, Windows attaches the help description to the arrow buttons instead of the edit field, so some screen readers don't read it on focus. Their labels already explain them ("Heading size ratio (percent of body text)", "Orphan line width (characters)").
 * MathJax loads from the internet when you open a converted document; without a connection, math shows as LaTeX source. Pandoc's Word, OpenDocument and EPUB output doesn't need MathJax.
-* PDFs don't contain image descriptions, so exported images get location-based alternative text. Add real descriptions for important figures.
+* Picture descriptions are written by a small AI model. They are usually right about what a picture shows, but can misread small numbers on charts or miscount items. Check descriptions of important figures. The larger 4B model (Ctrl+I) is more accurate on powerful computers.
 * OCR quality depends on the scan. Check OCR output before relying on it.
 * Pandoc and Tesseract are built in. A copy you install yourself takes priority, so you can use newer versions. The newest Tesseract Windows build is published by UB Mannheim and can lag behind the newest Tesseract source release.
 * Very complex tables (merged cells, nested tables) are kept as faithfully as each format allows. Markdown pipe tables can't merge cells, so merged cells are repeated or left empty.
@@ -237,7 +278,7 @@ This part is written so that an AI coding assistant or a new developer can chang
 ```yaml
 product: Document Conversion Suite
 engine: pdfmd (Python package "pdfmd")
-version: 1.7.1
+version: 1.8.0
 platform: Windows 10/11 (wxPython GUI); engine and CLI are cross-platform
 gui_toolkit: wxPython 4.x (native Win32 controls; MSAA/UIA provided by Windows)
 screen_reader_speech: accessible_output2 (NVDA, JAWS, System Access, Dolphin, ZoomText, PC-Talker, ZDSR); SAPI fallback deliberately disabled
@@ -245,7 +286,8 @@ accessible_math: MathJax 4.1.3 (speech, Braille, explorer) via jsDelivr CDN
 math_detection: LaTeX delimiters ($, $$, \(, \[) plus Unicode math inside prose
 pandoc: external program, found via PDFMD_PANDOC, ./pandoc/pandoc.exe next to the app, PATH, or default install folders
 installer: Inno Setup 6, WizardStyle=modern, per-user by default
-bundled: pandoc 3.13 (./pandoc), Tesseract 5.4.0.20240606 + tessdata_fast 4.1.0 for 17 languages and osd (./Tesseract-OCR); fetched and checksum-verified by packaging/fetch_vendor.py
+bundled: pandoc 3.13 (./pandoc), Tesseract 5.4.0.20240606 + tessdata_fast 4.1.0 for 17 languages and osd (./Tesseract-OCR), llama.cpp b12441 Vulkan llama-server + Huihui-Qwen3-VL-2B-Instruct-abliterated Q4_K_M with mmproj Q8_0 (./vision); fetched and checksum-verified by packaging/fetch_vendor.py
+vision_model: llama-server on 127.0.0.1 (random port, random API key), started per batch and stopped afterwards; device auto|cuda|gpu (Vulkan)|cpu|dev:<name>; engines Vulkan (bundled) and CUDA 12.4/13.5 (downloaded, chosen from nvidia-smi driver and compute capability); catalog vision-models.json (online copy on GitHub main) with SHA-256 for every file
 tool_priority: env var (PDFMD_PANDOC / PDFMD_TESSERACT) > user/system install > bundled copy
 config_file: "%USERPROFILE%\\.pdfmd_gui.json"
 files:
@@ -258,7 +300,12 @@ files:
   pdfmd/gui_tesseract.py: TesseractDialog (status, check, install/update, languages)
   pdfmd/extract.py: native/OCR extraction; _with_ruled_tables() reads ruled tables with PyMuPDF
   pdfmd/models.py: Block has real table fields (is_table, table_grid, table_type, table_score)
-  pdfmd/cli.py: command line (--mathjax, --html, --to, --pandoc-args)
+  pdfmd/cli.py: command line (--mathjax, --html, --to, --pandoc-args, --describe-images, --vision-device, --vision-model, --vision-status, --vision-update, --describe-photos)
+  pdfmd/vision.py: find engine/models, devices, catalog and updates, VisionEngine (llama-server), prompts, text detection
+  pdfmd/figures.py: find pictures, drawn charts and scanned photo regions in PDFs; describe stage; figure Markdown
+  pdfmd/docimages.py: describe pictures in any pandoc document (JSON AST); alt text or block quotes per output format
+  pdfmd/album.py: describe a folder of photos into an HTML or Markdown album
+  pdfmd/gui_vision.py: VisionDialog (Ctrl+I) and PhotoAlbumDialog (Ctrl+D)
   packaging/pdfmd.spec: PyInstaller (DocConversionSuite.exe + pdfmd-cli.exe)
   packaging/installer.iss: Inno Setup installer
   packaging/build.py: full release build
