@@ -6,9 +6,9 @@ scanned PDF into an accessible document.
 
 This module:
 
-* finds an installed Tesseract (PATH, the standard install folders, the
-  Windows registry, or ``PDFMD_TESSERACT``) and points pytesseract and the
-  engine at it, even when it isn't on PATH;
+* finds Tesseract (``PDFMD_TESSERACT``, the Windows registry, the standard
+  install folders, PATH, then the copy bundled with the suite) and points
+  pytesseract and the engine at it, even when it isn't on PATH;
 * reports the installed version and languages;
 * checks for the latest Windows build (UB Mannheim, the build recommended by
   the Tesseract project for Windows) on GitHub;
@@ -119,7 +119,33 @@ def find_tesseract() -> Optional[str]:
     for c in candidates:
         if c.is_file():
             return str(c)
-    return shutil.which("tesseract")
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    # Fall back to the copy bundled with Document Conversion Suite. A
+    # Tesseract the user installs or updates (Ctrl+T) takes priority.
+    bundled = bundled_tesseract()
+    return str(bundled) if bundled else None
+
+
+def _app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def bundled_tesseract() -> Optional[Path]:
+    exe = "tesseract.exe" if sys.platform == "win32" else "tesseract"
+    for base in (_app_dir(), _app_dir() / "packaging" / "vendor"):
+        cand = base / "Tesseract-OCR" / exe
+        if cand.is_file():
+            return cand
+    return None
+
+
+def is_bundled(path: Optional[str]) -> bool:
+    b = bundled_tesseract()
+    return bool(path and b and Path(path).resolve() == b.resolve())
 
 
 def user_tessdata_dir() -> Path:

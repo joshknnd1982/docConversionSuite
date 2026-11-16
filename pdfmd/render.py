@@ -434,8 +434,10 @@ def _block_to_lines(
                 if getattr(sp, "size", 0.0):
                     sizes.append(float(sp.size))
 
-            joined_fmt = _safe_join_texts(texts_fmt)
-            joined_raw = _safe_join_texts(texts_raw)
+            # Collapse layout spacing (OCR keeps wide gaps for table
+            # detection) back to single spaces in normal text.
+            joined_fmt = re.sub(r"(?<=\S) {2,}(?=\S)", " ", _safe_join_texts(texts_fmt))
+            joined_raw = re.sub(r"(?<=\S) {2,}(?=\S)", " ", _safe_join_texts(texts_raw))
 
         if joined_fmt.strip():
             rendered_lines.append(joined_fmt)

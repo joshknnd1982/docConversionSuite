@@ -274,7 +274,8 @@ class PandocDialog(wx.Dialog):
         busy = self._worker is not None and self._worker.is_alive()
         if self.pandoc:
             ver = ps.pandoc_version(self.pandoc) or ""
-            self.status.SetLabel(f"Pandoc {ver} is ready.".replace("  ", " "))
+            where = " (built in)" if ps.is_bundled(self.pandoc) else ""
+            self.status.SetLabel(f"Pandoc {ver}{where} is ready.".replace("  ", " "))
         else:
             self.status.SetLabel("Pandoc is not installed. Press Install Pandoc to install it, "
                                  "then convert.")

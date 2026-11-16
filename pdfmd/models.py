@@ -152,7 +152,25 @@ class PageText:
             size_est = float(median_safe(heights)) if heights else 0.0
             # assemble spans in reading order (left coordinate if present)
             idxs_sorted = sorted(idxs, key=lambda i: int(data.get("left", [0]*n)[i] or 0))
-            spans = [Span(text=str(data["text"][i]), size=size_est) for i in idxs_sorted]
+            # Keep the layout: a normal gap between words becomes one space,
+            # a gap much wider than a word space (a table column) becomes
+            # several spaces, which the table detector reads as a column
+            # break. Prose rendering collapses repeated spaces again.
+            lefts = data.get("left", [0]*n)
+            widths = data.get("width", [0]*n)
+            spans = []
+            prev_right: Optional[int] = None
+            for i in idxs_sorted:
+                word = str(data["text"][i])
+                left = int(lefts[i] or 0)
+                if prev_right is None:
+                    prefix = ""
+                elif size_est and left - prev_right > 1.2 * size_est:
+                    prefix = "   "
+                else:
+                    prefix = " "
+                spans.append(Span(text=prefix + word, size=size_est))
+                prev_right = left + int(widths[i] or 0)
             line = Line(spans=spans)
 
             if cur_block_key is None:

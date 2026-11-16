@@ -7,6 +7,9 @@
 ; Alt+N goes to the next page, Alt+B goes back and Enter activates the
 ; default button.
 ;
+; Pandoc and Tesseract OCR (with 17 OCR languages) are bundled in the
+; program folder, so everything works offline right after installing.
+;
 ; Build with:  python packaging/build.py
 ; (it passes AppVersion, SourceDir, DocsDir and OutputDir with /D).
 
@@ -37,7 +40,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-AppComments=Accessible document converter: PDF to Markdown, accessible math, and every pandoc format
+AppComments=Accessible document converter with built-in pandoc and Tesseract OCR
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 ; Install for the current user by default (no administrator prompt). The
@@ -65,8 +68,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 Name: "contextmenu"; Description: "Add ""Convert with Document Conversion Suite"" to the right-click menu (and Applications key menu) of PDF files"; GroupDescription: "Explorer integration:"
-Name: "installtesseract"; Description: "Install Tesseract OCR with winget, so scanned PDFs become accessible text (needs internet)"; GroupDescription: "Optional components:"
-Name: "installpandoc"; Description: "Install Pandoc with winget, for Word, EPUB, HTML, LaTeX and every other pandoc format (needs internet)"; GroupDescription: "Optional components:"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -74,6 +75,7 @@ Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\ACCESSIBILITY.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\FEATURES.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}\docs"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "{#DocsDir}\*.html"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
@@ -92,7 +94,5 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\DocConver
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\DocConversionSuite\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: contextmenu
 
 [Run]
-Filename: "{cmd}"; Parameters: "/c winget install --id UB-Mannheim.TesseractOCR --exact --source winget & echo. & echo Press any key to continue setup. & pause >nul"; StatusMsg: "Installing Tesseract OCR with winget..."; Flags: waituntilterminated; Tasks: installtesseract
-Filename: "{cmd}"; Parameters: "/c winget install --id JohnMacFarlane.Pandoc --exact --source winget & echo. & echo Press any key to continue setup. & pause >nul"; StatusMsg: "Installing Pandoc with winget..."; Flags: waituntilterminated; Tasks: installpandoc
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\docs\ACCESSIBILITY.html"; Description: "Open the accessibility guide"; Flags: postinstall shellexec skipifsilent unchecked

@@ -2,7 +2,7 @@
 
 Document Conversion Suite is an accessible, privacy-first document converter for Windows. It turns PDFs (including scanned PDFs) into clean Markdown with the pdfmd engine, makes math accessible with MathJax, writes accessible HTML, and converts between every format pandoc supports, with all of pandoc's options available.
 
-Version 1.7.0. For accessibility details and the full keyboard reference, see [ACCESSIBILITY.md](ACCESSIBILITY.md).
+Version 1.7.1. For accessibility details and the full keyboard reference, see [ACCESSIBILITY.md](ACCESSIBILITY.md).
 
 ## Contents
 
@@ -80,16 +80,18 @@ The pdfmd engine converts PDFs to Markdown in four stages: extract, transform, r
 | OCRmyPDF | Uses OCRmyPDF for the highest-fidelity OCR. |
 
 * OCR language: any Tesseract language code, or several joined with `+` (for example `eng+fra`). The list offers 17 common languages; you can type any other installed code.
-* If a PDF is scanned and Tesseract isn't installed, the app says which file is scanned and offers to install Tesseract, instead of producing an empty document.
+* **Tesseract OCR 5.4 is built in**, with 17 languages (ara, chi_sim, chi_tra, deu, eng, fra, hin, ita, jpn, kor, nld, pol, por, rus, spa, tur, vie) and orientation detection.
+* **Scanned tables**: table borders are erased from the page image before OCR so Tesseract reads every row, and wide gaps between words are kept so the table is rebuilt with its columns.
+* If a PDF is scanned and Tesseract isn't available (for example when running from source), the app says which file is scanned and offers to install Tesseract, instead of producing an empty document.
 * The app finds Tesseract even when it isn't on the PATH (standard install folders and the Windows registry).
 
 ### Tesseract OCR manager (Ctrl+T)
 
 File > Tesseract OCR (Ctrl+T), or Help > Check for Tesseract Updates:
 
-* Shows whether Tesseract is installed, its version and location, and its OCR languages.
+* Shows the Tesseract in use (the built-in copy or one you installed), its version and location, and its OCR languages.
 * **Check for Updates** looks up the latest Windows build (UB Mannheim, the build the Tesseract project recommends for Windows).
-* **Install Tesseract / Install Update / Reinstall** uses the Windows Package Manager (winget), or downloads the official installer from GitHub and starts it.
+* **Install Tesseract / Install Update / Reinstall** installs a system copy with the Windows Package Manager (winget), or downloads the official installer from GitHub and starts it. A system copy takes priority over the built-in one, so updates take effect immediately.
 * **Add language**: download any of about 100 languages (plus math/equation and orientation detection data) in fast or best quality. Added languages are stored per user, so no administrator rights are needed.
 * OCRmyPDF (for that OCR mode) is installed separately with `pip install ocrmypdf`.
 
@@ -192,7 +194,7 @@ The **Extra pandoc arguments** field gives access to every pandoc option, includ
 
 ### Getting pandoc
 
-Pandoc is a separate free program (GPL). The suite finds it in this order: the `PDFMD_PANDOC` environment variable, a `pandoc` folder next to the program, the PATH, then the standard install folders. If it's missing, install it from the installer (optional task), from the pandoc window (**Install Pandoc**, Alt+P, which runs the Windows Package Manager), or from [pandoc.org](https://pandoc.org/installing.html).
+**Pandoc 3.13 is built in** (a separate GPL program, included unmodified with its license and source link in `docs\THIRD-PARTY-NOTICES.txt`). The suite uses, in this order: the `PDFMD_PANDOC` environment variable, a pandoc on the PATH or in the standard install folders (so you can use a newer version), then the built-in copy. When running from source without pandoc, the pandoc window offers **Install Pandoc** (Alt+P).
 
 ## 6. The main window
 
@@ -295,7 +297,9 @@ See [doc/API.md](doc/API.md) for the engine API.
 * Accessible Inno Setup wizard (standard controls, keyboard operable, screen reader friendly).
 * Installs for the current user without an administrator prompt; optional all-users install.
 * Start menu: Document Conversion Suite, Accessibility Guide, Features Guide, Command Prompt for pdfmd-cli, Uninstall.
-* Optional: desktop shortcut; "Convert with Document Conversion Suite" for PDF files in Explorer; install Tesseract OCR with winget (checked by default); install Pandoc with winget.
+* Built in: pandoc 3.13, Tesseract OCR 5.4 and 17 OCR languages; nothing else to install.
+* Optional: desktop shortcut; "Convert with Document Conversion Suite" for PDF files in Explorer.
+* Licenses of bundled programs: `docs\THIRD-PARTY-NOTICES.txt`.
 * Documentation installed in the `docs` folder as Markdown and accessible HTML.
 * Clean uninstall from Settings > Apps.
 
@@ -308,7 +312,7 @@ See [doc/API.md](doc/API.md) for the engine API.
 ## 13. Requirements
 
 * Windows 10 or 11, 64-bit (installer). The engine and command line also run on macOS and Linux with Python 3.8+.
-* Optional: [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) for OCR modes; OCRmyPDF for the OCRmyPDF mode; [pandoc](https://pandoc.org) for pandoc conversions; a PDF engine (for example a LaTeX distribution, Typst or WeasyPrint) for pandoc PDF output.
+* Included in the installer: Tesseract OCR and pandoc. Optional: OCRmyPDF for the OCRmyPDF mode; a PDF engine (for example a LaTeX distribution, Typst or WeasyPrint) for pandoc PDF output.
 * A screen reader is optional; announcements go to NVDA, JAWS, System Access, Dolphin, ZoomText, PC-Talker or ZDSR when one is running.
 
 ## 14. Files and locations
@@ -317,6 +321,8 @@ See [doc/API.md](doc/API.md) for the engine API.
 | --- | --- |
 | Program | `%LOCALAPPDATA%\Programs\Document Conversion Suite` (per-user) or `C:\Program Files\Document Conversion Suite` (all users) |
 | GUI | `DocConversionSuite.exe` |
+| Built-in pandoc | `pandoc\` in the program folder |
+| Built-in Tesseract and languages | `Tesseract-OCR\` in the program folder |
 | Command line | `pdfmd-cli.exe` |
 | Documentation | `docs\` in the program folder |
 | Settings | `%USERPROFILE%\.pdfmd_gui.json` |

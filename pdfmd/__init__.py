@@ -27,12 +27,13 @@ from .pipeline import pdf_to_markdown
 
 __all__ = ["Options", "pdf_to_markdown", "__version__"]
 
+# v1.7.1: pandoc 3.13 and Tesseract OCR 5.4 bundled; OCR of ruled tables.
 # v1.7.0: accessible wxPython GUI (screen readers, keyboard, menus),
 #          accessible math with MathJax, accessible HTML output, pandoc
 #          integration, Windows installer.
 # v1.6.0: OCR language selection, multi-file batch GUI, GUI redesign,
 #          colorspace fix for image export, init-order crash fix.
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 
 
 def main() -> None:

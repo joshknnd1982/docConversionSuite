@@ -8,7 +8,7 @@ This guide has three parts:
 2. **What changed and why**: the audit of the old Tkinter interface, and how each problem was fixed.
 3. **For AI models and developers**: a precise, structured description of the accessibility design, the rules any change must follow, and how to test them.
 
-Version: 1.7.0
+Version: 1.7.1
 
 ---
 
@@ -168,7 +168,7 @@ Installing uses the Windows Package Manager (winget) in a console window your sc
 
 The installer is built with Inno Setup and uses only standard Windows controls, so NVDA, JAWS and Narrator read every page. Operate it with Tab, Shift+Tab, Space (check boxes), the arrow keys (radio buttons), **Alt+N** (Next), **Alt+B** (Back) and Enter.
 
-It installs for the current user without an administrator prompt; you can choose to install for all users. Optional tasks: a desktop shortcut, the "Convert with Document Conversion Suite" Explorer menu item, installing Tesseract OCR with winget (checked by default), and installing Pandoc with winget. The Start menu gets shortcuts for the program, this Accessibility Guide, the Features Guide and a command prompt for `pdfmd-cli`.
+It installs for the current user without an administrator prompt; you can choose to install for all users. Optional tasks: a desktop shortcut and the "Convert with Document Conversion Suite" Explorer menu item. Pandoc 3.13 and Tesseract OCR 5.4 (with 17 OCR languages plus orientation detection) are built in, so every feature works offline right after installing. Nothing opens a console window during setup. The Start menu gets shortcuts for the program, this Accessibility Guide, the Features Guide and a command prompt for `pdfmd-cli`.
 
 ### 1.9 Known limitations
 
@@ -177,8 +177,7 @@ It installs for the current user without an administrator prompt; you can choose
 * MathJax loads from the internet when you open a converted document; without a connection, math shows as LaTeX source. Pandoc's Word, OpenDocument and EPUB output doesn't need MathJax.
 * PDFs don't contain image descriptions, so exported images get location-based alternative text. Add real descriptions for important figures.
 * OCR quality depends on the scan. Check OCR output before relying on it.
-* Pandoc is a separate program. Install it from the installer, from the pandoc window (Alt+P), or from pandoc.org.
-* Tesseract is a separate program too. Install it from the installer or with Ctrl+T. The newest Windows build is published by UB Mannheim and can lag behind the newest Tesseract source release.
+* Pandoc and Tesseract are built in. A copy you install yourself takes priority, so you can use newer versions. The newest Tesseract Windows build is published by UB Mannheim and can lag behind the newest Tesseract source release.
 * Very complex tables (merged cells, nested tables) are kept as faithfully as each format allows. Markdown pipe tables can't merge cells, so merged cells are repeated or left empty.
 
 ---
@@ -225,7 +224,7 @@ It installs for the current user without an administrator prompt; you can choose
 | 13 | A list box with every file, Delete to remove, Add/Remove/Empty buttons. |
 | 14 | MathJax integration, detection of math inside sentences, accessible HTML output, and accessible math defaults for pandoc. |
 | 15 | Auto OCR by default; the app finds Tesseract wherever it is installed, explains scanned files and offers to install it; a Tesseract window checks for updates, installs, and adds languages. |
-| 16 | Table metadata became real fields that survive every transform; multi-block tables consume their blocks; orphan merging never touches tables, headings, math, code or lists; ruled tables are read with PyMuPDF's table finder; HTML header cells get `scope="col"`. |
+| 16 | Table metadata became real fields that survive every transform; table borders are erased before OCR and wide word gaps kept, so scanned tables are read completely and rebuilt; multi-block tables consume their blocks; orphan merging never touches tables, headings, math, code or lists; ruled tables are read with PyMuPDF's table finder; HTML header cells get `scope="col"`. |
 
 ---
 
@@ -238,7 +237,7 @@ This part is written so that an AI coding assistant or a new developer can chang
 ```yaml
 product: Document Conversion Suite
 engine: pdfmd (Python package "pdfmd")
-version: 1.7.0
+version: 1.7.1
 platform: Windows 10/11 (wxPython GUI); engine and CLI are cross-platform
 gui_toolkit: wxPython 4.x (native Win32 controls; MSAA/UIA provided by Windows)
 screen_reader_speech: accessible_output2 (NVDA, JAWS, System Access, Dolphin, ZoomText, PC-Talker, ZDSR); SAPI fallback deliberately disabled
@@ -246,6 +245,8 @@ accessible_math: MathJax 4.1.3 (speech, Braille, explorer) via jsDelivr CDN
 math_detection: LaTeX delimiters ($, $$, \(, \[) plus Unicode math inside prose
 pandoc: external program, found via PDFMD_PANDOC, ./pandoc/pandoc.exe next to the app, PATH, or default install folders
 installer: Inno Setup 6, WizardStyle=modern, per-user by default
+bundled: pandoc 3.13 (./pandoc), Tesseract 5.4.0.20240606 + tessdata_fast 4.1.0 for 17 languages and osd (./Tesseract-OCR); fetched and checksum-verified by packaging/fetch_vendor.py
+tool_priority: env var (PDFMD_PANDOC / PDFMD_TESSERACT) > user/system install > bundled copy
 config_file: "%USERPROFILE%\\.pdfmd_gui.json"
 files:
   pdfmd/app_gui.py: main window (PdfMdFrame), menus, worker thread, MathJax prompt, pandoc auto-export
@@ -320,6 +321,7 @@ sizer.Add(self.example_choice, 0)
 
 * **MSAA inspection.** A script calls `AccessibleObjectFromWindow` on every child window of the running program and reads `accName`, `accRole`, `accKeyboardShortcut`, `accState` and `accDescription`. Result: every input control reports its label as name, its Alt key as keyboard shortcut and its help as description; disabled buttons report the unavailable state.
 * **Keyboard simulation.** `wx.UIActionSimulator` presses Alt+letter keys, Tab, F5 and Ctrl+Tab, and the test checks which control has focus. Result: main window 21 of 21 checks passed (every access key across group boxes, complete Tab order, F5 conversion, MathJax offer, focus kept after conversion). Pandoc window 21 of 21 checks passed (access keys on all three pages, Ctrl+Tab page switching, F5 conversion of a PDF to Word with extra arguments, Unicode math passed to pandoc as TeX). Tesseract window 7 of 7 checks passed (status text without Tesseract, live update check, install button state, access keys). Regression runs after the table and OCR changes passed again.
+* **Real conversions with the bundled tools (14 of 14 passed).** An image-only scanned PDF was converted with Auto OCR: all text was recovered and both tables (one ruled) were rebuilt as tables. With the bundled pandoc: Word got 2 real tables and 4 native equations with no MathJax code leaking in; ODT got 2 tables; EPUB got MathML math and both tables; HTML got header cells, `lang` and MathJax math; GitHub Markdown kept pipe tables; and a Word file converted back to Markdown kept its tables.
 * **MathJax output.** A converted test document was opened in a browser. The accessibility tree exposed each expression as named math, for example "E equals m c squared", "x sub i is greater than or equal to 0", "alpha plus beta cubed equals gamma"; Nemeth Braille strings were generated; each expression was keyboard focusable.
 
 When you change the GUI, repeat these checks: Tab through every control with a screen reader running, try every Alt key in the tables above, convert a file with math, and confirm announcements.

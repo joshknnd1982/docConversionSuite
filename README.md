@@ -7,14 +7,20 @@
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![Version](https://img.shields.io/badge/version-1.7.0-purple)
+![Version](https://img.shields.io/badge/version-1.7.1-purple)
 ![Accessibility](https://img.shields.io/badge/screen%20readers-NVDA%20%7C%20JAWS%20%7C%20Narrator-blue)
 
-> **Download for Windows:** get `DocConversionSuite-1.7.0-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible.
+> **Download for Windows:** get `DocConversionSuite-1.7.1-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible, and pandoc and Tesseract OCR are built in.
 >
 > **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do)
 
 Document Conversion Suite is built on **pdfmd**, the PDF to Markdown engine by Michael Neivandt, and on [pandoc](https://pandoc.org). The Python package and the command-line tool keep the name `pdfmd`.
+
+## What's new in 1.7.1
+
+* **Pandoc 3.13 and Tesseract OCR 5.4 are built in**, with 17 OCR languages (English, German, French, Spanish, Italian, Portuguese, Dutch, Polish, Russian, Chinese Simplified and Traditional, Japanese, Korean, Arabic, Hindi, Turkish, Vietnamese). No separate installs; everything works offline.
+* **Scanned tables**: table borders are erased before OCR, so Tesseract reads every row of ruled tables in scanned PDFs, and wide gaps between words are kept so OCR'd tables are rebuilt as real tables.
+* A Tesseract or pandoc you install yourself (for example a newer Tesseract from Ctrl+T) takes priority over the built-in copy.
 
 ## What's new in 1.7.0
 
@@ -412,6 +418,8 @@ pdfmd input.pdf
 
 #### Windows
 
+The Windows installer already includes Tesseract and pandoc. The steps below are only for running from source.
+
 1. **Install Tesseract OCR:**
 
    * Download: [https://github.com/UB-Mannheim/tesseract/wiki](https://github.com/UB-Mannheim/tesseract/wiki)
@@ -463,9 +471,11 @@ pip install pymupdf pillow pytesseract ocrmypdf markdown wxPython accessible_out
 
 Download `DocConversionSuite-<version>-setup.exe` from [Releases](https://github.com/joshknnd1982/docConversionSuite/releases). No Python required. The installer is screen reader accessible and installs for the current user without an administrator prompt.
 
-It installs `DocConversionSuite.exe` (the accessible GUI), `pdfmd-cli.exe` (the command line), and the guides. Optional tasks: desktop shortcut, Explorer "Convert with Document Conversion Suite" for PDFs, and Pandoc (via winget).
+It installs `DocConversionSuite.exe` (the accessible GUI), `pdfmd-cli.exe` (the command line), and the guides. Optional tasks: desktop shortcut and Explorer "Convert with Document Conversion Suite" for PDFs. Pandoc 3.13 and Tesseract OCR 5.4 (with 17 OCR languages plus orientation detection) are built in, so every feature works offline right after installing.
 
-**Note:** Tesseract must still be installed separately for OCR functionality. Pandoc is needed for pandoc conversions.
+**Note:** OCRmyPDF (only for the OCRmyPDF OCR mode) is installed separately. Licenses of the bundled programs are in `docs\THIRD-PARTY-NOTICES.txt`.
+
+Building the installer downloads pandoc and Tesseract with `packaging/fetch_vendor.py`, which verifies every file against a pinned checksum (needs 7-Zip).
 
 ### Building the installer yourself
 

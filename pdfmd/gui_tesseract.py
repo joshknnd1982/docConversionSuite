@@ -107,7 +107,8 @@ class TesseractDialog(wx.Dialog):
         langs = ts.list_languages(exe) if exe else []
         lines: List[str] = []
         if exe:
-            lines.append(f"Tesseract {version or '(unknown version)'} is installed.")
+            where = " (built in to Document Conversion Suite)" if ts.is_bundled(exe) else ""
+            lines.append(f"Tesseract {version or '(unknown version)'} is installed{where}.")
             lines.append(f"Location: {exe}")
         else:
             lines.append("Tesseract is not installed. Scanned PDFs can't be read until it is. "

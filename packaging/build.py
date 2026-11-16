@@ -11,7 +11,9 @@ Steps:
 2. Write the Windows version resource for the executables.
 3. Run PyInstaller (packaging/pdfmd.spec) -> dist/DocConversionSuite/ with DocConversionSuite.exe
    (GUI) and pdfmd-cli.exe (command line).
-4. Run Inno Setup (packaging/installer.iss) -> dist/installer/
+4. Copy the bundled pandoc and Tesseract OCR (packaging/fetch_vendor.py
+   downloads and verifies them if they aren't there yet).
+5. Run Inno Setup (packaging/installer.iss) -> dist/installer/
    DocConversionSuite-<version>-setup.exe.
 
 Inno Setup 6 must be installed. Set ISCC to the full path of ISCC.exe if
@@ -107,7 +109,16 @@ def main() -> None:
         check=True, cwd=ROOT,
     )
 
-    print("4. Running Inno Setup")
+    print("4. Adding bundled pandoc and Tesseract OCR")
+    vendor = PKG / "vendor"
+    if not (vendor / "pandoc" / "pandoc.exe").is_file() or             not (vendor / "Tesseract-OCR" / "tesseract.exe").is_file():
+        subprocess.run([sys.executable, str(PKG / "fetch_vendor.py")], check=True, cwd=ROOT)
+    app_dir = DIST / "DocConversionSuite"
+    for name in ("pandoc", "Tesseract-OCR"):
+        shutil.copytree(vendor / name, app_dir / name, dirs_exist_ok=True)
+    shutil.copy2(PKG / "THIRD-PARTY-NOTICES.txt", app_dir / "THIRD-PARTY-NOTICES.txt")
+
+    print("5. Running Inno Setup")
     (DIST / "installer").mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [find_iscc(), f"/DAppVersion={__version__}", f"/DSourceDir={DIST / 'DocConversionSuite'}",

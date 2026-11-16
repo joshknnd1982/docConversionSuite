@@ -1,0 +1,66 @@
+Document Conversion Suite - third-party software
+=================================================
+
+Document Conversion Suite is licensed under the MIT License (see
+LICENSE.txt). The installer also contains the following separate programs
+and components, each under its own license.
+
+
+Pandoc 3.13
+-----------
+Folder:   pandoc\
+Author:   John MacFarlane and contributors
+License:  GNU General Public License, version 2 or later
+          (see pandoc\COPYING.rtf and pandoc\COPYRIGHT.txt)
+Source:   https://github.com/jgm/pandoc/tree/3.13
+Binary:   https://github.com/jgm/pandoc/releases/tag/3.13 (unmodified)
+
+Pandoc is included as a separate program and run as a separate process.
+Its complete source code is available at the address above.
+
+
+Tesseract OCR 5.4.0.20240606 (UB Mannheim Windows build)
+--------------------------------------------------------
+Folder:   Tesseract-OCR\
+Authors:  The Tesseract OCR project and contributors; Windows build by the
+          University Library Mannheim
+License:  Apache License 2.0 (see Tesseract-OCR\doc\LICENSE)
+Source:   https://github.com/tesseract-ocr/tesseract
+Build:    https://github.com/UB-Mannheim/tesseract/releases/tag/v5.4.0.20240606
+
+Only the OCR program, its libraries and documentation are included (the
+training tools are left out). The libraries in that folder are distributed
+with the UB Mannheim build under their own open source licenses.
+
+
+Tesseract trained data (tessdata_fast 4.1.0)
+--------------------------------------------
+Folder:   Tesseract-OCR\tessdata\*.traineddata
+License:  Apache License 2.0
+Source:   https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0
+Languages: ara, chi_sim, chi_tra, deu, eng, fra, hin, ita, jpn, kor, nld,
+          osd, pol, por, rus, spa, tur, vie
+
+
+Python components (inside _internal\)
+-------------------------------------
+pdfmd engine         MIT License, Michael Neivandt (https://github.com/M1ck4/pdfmd)
+PyMuPDF / MuPDF      GNU Affero General Public License v3 (https://github.com/pymupdf/PyMuPDF)
+wxPython             wxWindows Library Licence (https://wxpython.org)
+accessible_output2   MIT License (https://github.com/accessibleapps/accessible_output2)
+pytesseract          Apache License 2.0 (https://github.com/madmaze/pytesseract)
+Pillow               MIT-CMU License (https://python-pillow.org)
+NumPy                BSD 3-Clause License (https://numpy.org)
+Python-Markdown      BSD 3-Clause License (https://github.com/Python-Markdown/markdown)
+pywin32              Python Software Foundation License (https://github.com/mhammond/pywin32)
+Python               Python Software Foundation License (https://www.python.org)
+
+The complete source code of Document Conversion Suite, including the pdfmd
+engine, is available at https://github.com/joshknnd1982/docConversionSuite.
+
+
+MathJax
+-------
+Converted documents load MathJax 4 (Apache License 2.0,
+https://www.mathjax.org) from the jsDelivr CDN when they are opened. MathJax
+is not included in the installer.

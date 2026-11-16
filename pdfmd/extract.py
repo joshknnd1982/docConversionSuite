@@ -346,6 +346,40 @@ def _with_ruled_tables(page, info: dict) -> dict:
 # ------------------------ Tesseract-based OCR path -----------------------
 
 
+def _erase_ruling_lines(img, min_fraction: float = 0.06):
+    """Whiten long horizontal and vertical lines (table borders) before OCR.
+
+    Tesseract's page segmentation often skips the text inside ruled tables:
+    the borders break the page into tiny regions. Erasing straight dark runs
+    longer than ``min_fraction`` of the page's shorter side keeps the text
+    (letters are far shorter than that) and lets Tesseract read every row.
+    The column gaps that remain let the table detector rebuild the table.
+    Needs NumPy; without it the image is returned unchanged.
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return img
+    try:
+        gray = img.convert("L")
+        a = np.array(gray)
+        dark = a < 128
+        min_len = int(min(a.shape) * min_fraction)
+        if min_len < 20:
+            return img
+        out = a.copy()
+        for d, o in ((dark, out), (dark.T, out.T)):
+            rows = np.flatnonzero(d.sum(axis=1) >= min_len)
+            for r in rows:
+                edges = np.flatnonzero(np.diff(np.concatenate(([0], d[r].astype(np.int8), [0]))))
+                for start, end in zip(edges[0::2], edges[1::2]):
+                    if end - start >= min_len:
+                        o[r, start:end] = 255
+        return Image.fromarray(out)
+    except Exception:
+        return img
+
+
 def _extract_tesseract(
     pdf_path: str,
     options: Options,
@@ -378,7 +412,7 @@ def _extract_tesseract(
                 raise RuntimeError("Unexpected: pixmap missing tobytes()")
 
             png_bytes = pix.tobytes("png")
-            img = Image.open(io.BytesIO(png_bytes))
+            img = _erase_ruling_lines(Image.open(io.BytesIO(png_bytes)))
 
             # Let pytesseract detect layout at word/line level
             data = pytesseract.image_to_data(

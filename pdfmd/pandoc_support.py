@@ -11,9 +11,10 @@ Pandoc is a separate program (GPL-2.0-or-later). pdfmd looks for it in this
 order:
 
 1. the ``PDFMD_PANDOC`` environment variable (full path to pandoc.exe),
-2. a ``pandoc`` folder next to the pdfmd program,
-3. ``pandoc`` on the PATH,
-4. the default Windows install folders.
+2. ``pandoc`` on the PATH,
+3. the default Windows install folders,
+4. the copy bundled with Document Conversion Suite (``pandoc`` folder next
+   to the program).
 
 Accessibility defaults (used when "Math rendering" is Automatic):
 
@@ -217,9 +218,7 @@ def find_pandoc() -> Optional[str]:
     if env and Path(env).is_file():
         return env
     exe = "pandoc.exe" if sys.platform == "win32" else "pandoc"
-    bundled = _app_dir() / "pandoc" / exe
-    if bundled.is_file():
-        return str(bundled)
+    # A pandoc the user installed takes priority over the bundled copy.
     found = shutil.which("pandoc")
     if found:
         return found
@@ -230,7 +229,23 @@ def find_pandoc() -> Optional[str]:
                 cand = Path(base) / "Pandoc" / exe
                 if cand.is_file():
                     return str(cand)
+    bundled = bundled_pandoc()
+    return str(bundled) if bundled else None
+
+
+def bundled_pandoc() -> Optional[Path]:
+    """The pandoc shipped with Document Conversion Suite, if present."""
+    exe = "pandoc.exe" if sys.platform == "win32" else "pandoc"
+    for base in (_app_dir(), _app_dir() / "packaging" / "vendor"):
+        cand = base / "pandoc" / exe
+        if cand.is_file():
+            return cand
     return None
+
+
+def is_bundled(path: Optional[str]) -> bool:
+    b = bundled_pandoc()
+    return bool(path and b and Path(path).resolve() == b.resolve())
 
 
 def _run(args: Sequence[str], input_text: Optional[str] = None,

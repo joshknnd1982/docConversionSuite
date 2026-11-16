@@ -373,9 +373,11 @@ class PdfMdFrame(wx.Frame):
         self._log(f"Document Conversion Suite {__version__}. "
                   f"Screen reader announcements: {self.announcer.describe()}.")
         pandoc = ps.find_pandoc()
-        self._log(f"Pandoc: {'found at ' + pandoc if pandoc else 'not installed (Ctrl+P to install)'}.")
+        self._log("Pandoc: " + (f"{ps.pandoc_version(pandoc) or ''} {'(built in)' if ps.is_bundled(pandoc) else 'at ' + pandoc}"
+                                if pandoc else "not installed (Ctrl+P to install)") + ".")
         tess = ts.configure()
-        self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} at {tess}" if tess
+        self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} "
+                                       f"{'(built in)' if ts.is_bundled(tess) else 'at ' + tess}" if tess
                   else "not installed. Scanned PDFs need it; press Ctrl+T to install it") + ".")
         wx.CallAfter(self.input_list.SetFocus)
 
