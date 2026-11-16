@@ -166,3 +166,4 @@ tmp/
 packaging/build/
 .claude/
 packaging/vendor/
+!CLAUDE.md
