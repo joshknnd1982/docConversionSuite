@@ -26,7 +26,10 @@ from typing import Callable, Optional, List, Dict
 import os
 
 try:
-    import fitz  # PyMuPDF
+    try:  # PyMuPDF >= 1.24.3 prefers this name (no deprecation warning)
+        import pymupdf as fitz  # type: ignore
+    except ImportError:
+        import fitz  # PyMuPDF
 except Exception:
     fitz = None
 
@@ -62,7 +65,10 @@ def _append_image_refs(md: str, page_to_relpaths: Dict[int, List[str]]) -> str:
             continue
         lines.append(f"**Images from page {pno + 1}:**")
         for i, rel in enumerate(paths, start=1):
-            lines.append(f"- ![p{pno + 1}-{i}]({rel})")
+            # Descriptive alt text so screen readers announce more than a
+            # file name. The PDF carries no image descriptions, so we say
+            # where the image came from.
+            lines.append(f"- ![Image {i} from page {pno + 1}]({rel})")
         lines.append("")
     
     return "\n".join(lines).rstrip() + "\n"

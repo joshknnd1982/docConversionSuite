@@ -157,3 +157,10 @@ tmp/
 
 # Unused code snippets
 *_dead_ends/
+# Document Conversion Suite: keep the project's own docs and build files
+!ACCESSIBILITY.md
+!FEATURES.md
+!doc/*.md
+!packaging/*.spec
+packaging/build/
+.claude/

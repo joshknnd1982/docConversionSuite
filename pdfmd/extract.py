@@ -28,7 +28,10 @@ import tempfile
 from typing import Callable, List, Optional
 
 try:
-    import fitz  # type: ignore
+    try:  # PyMuPDF >= 1.24.3 prefers this name (no deprecation warning)
+        import pymupdf as fitz  # type: ignore
+    except ImportError:
+        import fitz  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     fitz = None  # type: ignore
 
@@ -222,6 +225,7 @@ def _extract_native(
         for i in range(limit):
             page = doc.load_page(i)
             info = page.get_text("dict")
+            info = _with_ruled_tables(page, info)
             out.append(PageText.from_pymupdf(info))
 
             if progress_cb:
@@ -230,6 +234,113 @@ def _extract_native(
         return out
     finally:
         doc.close()
+
+
+# ------------------------ Ruled tables (PyMuPDF) -------------------------
+
+
+def _clean_cell(value: Optional[str]) -> str:
+    """Table cells can't contain line breaks in Markdown; join them."""
+    if not value:
+        return ""
+    return " ".join(part.strip() for part in str(value).splitlines() if part.strip())
+
+
+def _with_ruled_tables(page, info: dict) -> dict:
+    """Replace text inside ruled tables with whole-table blocks.
+
+    PyMuPDF's table finder reads tables from the lines drawn in the PDF, so
+    it keeps every row and column of bordered tables (including the header
+    row and multi-line cells) that text-only heuristics tend to break up.
+    The text of those cells is removed from the normal text blocks and one
+    ``pdfmd_table`` block is inserted where the table starts. Pages without
+    ruled tables, or older PyMuPDF versions, are returned unchanged.
+    """
+    finder = getattr(page, "find_tables", None)
+    if finder is None:
+        return info
+    try:
+        import contextlib
+
+        # PyMuPDF prints a hint about an optional add-on package; keep it out
+        # of the user's console and log.
+        with contextlib.redirect_stdout(io.StringIO()):
+            found = finder()
+        tables = list(getattr(found, "tables", []) or [])
+    except Exception:
+        return info
+    if not tables:
+        return info
+
+    table_items = []
+    for tab in tables:
+        try:
+            rows = tab.extract() or []
+        except Exception:
+            continue
+        grid = [[_clean_cell(c) for c in row] for row in rows]
+        grid = [row for row in grid if any(row)]
+        # Header row drawn above the table's frame.
+        header = getattr(tab, "header", None)
+        if header is not None and getattr(header, "external", False):
+            names = [_clean_cell(n) for n in (getattr(header, "names", None) or [])]
+            if any(names):
+                grid.insert(0, names)
+        if len(grid) < 2 or max(len(r) for r in grid) < 2:
+            continue  # a framed paragraph, not a table
+        non_empty = sum(1 for r in grid for c in r if c)
+        if non_empty < 4:
+            continue
+        x0, y0, x1, y1 = tab.bbox
+        table_items.append(((x0 - 1, y0 - 1, x1 + 1, y1 + 1), grid))
+    if not table_items:
+        return info
+
+    def inside(bbox) -> Optional[int]:
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        for k, (tb, _) in enumerate(table_items):
+            if tb[0] <= cx <= tb[2] and tb[1] <= cy <= tb[3]:
+                return k
+        return None
+
+    new_blocks = []
+    placed = set()
+    sizes: dict = {}
+    for b in info.get("blocks", []) or []:
+        if "lines" not in b:
+            new_blocks.append(b)
+            continue
+        kept_lines = []
+        hit = None
+        for ln in b.get("lines", []) or []:
+            k = inside(ln.get("bbox", (0, 0, 0, 0)))
+            if k is None:
+                kept_lines.append(ln)
+                continue
+            hit = k
+            for sp in ln.get("spans", []) or []:
+                if sp.get("size"):
+                    sizes.setdefault(k, float(sp["size"]))
+        if hit is not None and hit not in placed:
+            # Text before the table in this block stays before it.
+            before = [ln for ln in kept_lines if ln.get("bbox", (0, 0, 0, 0))[1] < table_items[hit][0][1]]
+            after = [ln for ln in kept_lines if ln not in before]
+            if before:
+                new_blocks.append({**b, "lines": before})
+            new_blocks.append({"type": "pdfmd_table", "grid": table_items[hit][1],
+                               "bbox": table_items[hit][0], "size": sizes.get(hit, 0.0)})
+            placed.add(hit)
+            if after:
+                new_blocks.append({**b, "lines": after})
+            continue
+        if kept_lines:
+            new_blocks.append({**b, "lines": kept_lines})
+    # Tables whose cells held no extractable text lines are added at the end.
+    for k, (bbox, grid) in enumerate(table_items):
+        if k not in placed:
+            new_blocks.append({"type": "pdfmd_table", "grid": grid, "bbox": bbox, "size": 0.0})
+    return {**info, "blocks": new_blocks}
 
 
 # ------------------------ Tesseract-based OCR path -----------------------
@@ -427,11 +538,22 @@ def _tesseract_available() -> bool:
     if pytesseract is None:
         return False
 
+    # Find Tesseract even when it isn't on PATH (standard install folders,
+    # registry), and point pytesseract at it.
+    try:
+        from .tesseract_support import configure
+
+        cmd = configure() or "tesseract"
+    except Exception:
+        cmd = getattr(getattr(pytesseract, "pytesseract", None), "tesseract_cmd", "tesseract")
+
     try:
         result = subprocess.run(
-            ["tesseract", "--version"],
+            [cmd, "--version"],
             capture_output=True,
             timeout=5,
+            # No console window flashing up from the desktop app.
+            creationflags=0x08000000 if os.name == "nt" else 0,
         )
         return result.returncode == 0
     except Exception:

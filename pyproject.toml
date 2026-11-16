@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfmd"
-version = "1.6.0"
-description = "Fast, local, privacy-first PDF to Markdown converter with OCR, multi-language support, table detection, and math preservation"
+version = "1.7.0"
+description = "Accessible, privacy-first PDF to Markdown converter with OCR, table detection, accessible math (MathJax), pandoc export, and a screen-reader-friendly GUI"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
@@ -22,7 +22,11 @@ keywords = [
     "math", 
     "latex",
     "privacy",
-    "offline"
+    "offline",
+    "accessibility",
+    "screen reader",
+    "mathjax",
+    "pandoc"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -44,6 +48,7 @@ classifiers = [
 
 dependencies = [
     "pymupdf>=1.23.0",
+    "markdown>=3.4",
 ]
 
 [project.optional-dependencies]
@@ -60,11 +65,19 @@ ocrmypdf = [
     "ocrmypdf>=15.0.0",
 ]
 
+# Accessible desktop GUI (wxPython, screen reader announcements)
+gui = [
+    "wxPython>=4.2",
+    "accessible_output2>=0.17",
+]
+
 # Full installation with all features
 full = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
     "ocrmypdf>=15.0.0",
+    "wxPython>=4.2",
+    "accessible_output2>=0.17",
 ]
 
 # Development tools
@@ -78,10 +91,13 @@ dev = [
 [project.scripts]
 pdfmd = "pdfmd.cli:main"
 
+[project.gui-scripts]
+pdfmd-gui = "pdfmd.app_gui:main"
+
 [project.urls]
-Homepage = "https://github.com/M1ck4/pdfmd"
-Repository = "https://github.com/M1ck4/pdfmd"
-"Bug Tracker" = "https://github.com/M1ck4/pdfmd/issues"
+Homepage = "https://github.com/joshknnd1982/pdfmd"
+Repository = "https://github.com/joshknnd1982/pdfmd"
+"Bug Tracker" = "https://github.com/joshknnd1982/pdfmd/issues"
 
 [tool.setuptools]
 packages = ["pdfmd"]

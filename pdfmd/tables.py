@@ -267,6 +267,8 @@ def _detect_bordered_table(block: Block) -> Optional[List[List[str]]]:
     Returns:
         Grid of cells if a valid bordered table is found, None otherwise.
     """
+    if getattr(block, "is_table", False):
+        return True  # already a table: don't detect it again
     texts = _block_line_texts(block)
     if len(texts) < 2:
         return None
@@ -329,6 +331,8 @@ def _block_can_start_vertical(block: Block) -> bool:
     Vertical tables have each row as a separate block, with consistent
     line counts across blocks.
     """
+    if getattr(block, "is_table", False):
+        return False  # already a table (found from the PDF's ruling lines)
     texts = _block_line_texts(block)
     n = len(texts)
     if n < 2 or n > 6:
@@ -373,6 +377,8 @@ def _detect_vertical_run(
 
     while idx < n_blocks:
         blk = page.blocks[idx]
+        if getattr(blk, "is_table", False):
+            break
         texts = _block_line_texts(blk)
 
         if len(texts) != col_count:

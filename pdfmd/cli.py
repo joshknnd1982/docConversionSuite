@@ -28,6 +28,7 @@ from typing import Callable, Iterable, List, Optional, Sequence
 
 from .models import Options
 from .pipeline import pdf_to_markdown
+from .mathjax import apply_mathjax, count_math
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +138,13 @@ Security notes:
     parser.add_argument(
         "--ocr",
         choices=["off", "auto", "tesseract", "ocrmypdf"],
-        default="off",
+        default="auto",
         help=(
-            "OCR mode (default: off):\n"
-            "  off        — use native text only\n"
-            "  auto       — detect scanned pages and OCR as needed\n"
-            "  tesseract  — force page-by-page Tesseract OCR\n"
-            "  ocrmypdf   — use OCRmyPDF for high-fidelity layout"
+            "OCR mode (default: auto):\n"
+            "  off        - use native text only\n"
+            "  auto       - detect scanned pages and OCR as needed\n"
+            "  tesseract  - force page-by-page Tesseract OCR\n"
+            "  ocrmypdf   - use OCRmyPDF for high-fidelity layout"
         ),
     )
 
@@ -175,6 +176,54 @@ Security notes:
         "--preview-only",
         action="store_true",
         help="Only process the first few pages (useful for quick inspection).",
+    )
+
+    parser.add_argument(
+        "--mathjax",
+        choices=["ask", "yes", "no"],
+        default="ask",
+        help=(
+            "Accessible math (default: ask). When a document contains math,\n"
+            "MathJax makes it readable by screen readers (speech, Braille,\n"
+            "keyboard exploration). It adds a MathJax loader to the Markdown\n"
+            "file and writes an accessible HTML copy next to it.\n"
+            "  ask  - ask after each file that contains math (answer defaults\n"
+            "         to yes; without a terminal this behaves like 'yes')\n"
+            "  yes  - always enable MathJax when math is found\n"
+            "  no   - never enable MathJax"
+        ),
+    )
+
+    parser.add_argument(
+        "--html",
+        action="store_true",
+        help=(
+            "Also write an accessible HTML copy of every converted file\n"
+            "(document language, headings, table headers, and MathJax math\n"
+            "when enabled)."
+        ),
+    )
+
+    parser.add_argument(
+        "--to",
+        metavar="FORMAT",
+        help=(
+            "Also convert the Markdown with pandoc to FORMAT, for example\n"
+            "docx, epub, html, latex, odt, pptx, rst, typst or pdf. Any pandoc\n"
+            "output format works (see `pandoc --list-output-formats`).\n"
+            "Requires pandoc. Math becomes native equations (Word/ODT),\n"
+            "MathML (EPUB) or MathJax (HTML)."
+        ),
+    )
+
+    parser.add_argument(
+        "--pandoc-args",
+        metavar="ARGS",
+        default="",
+        help=(
+            "Extra pandoc options, quoted as one argument, for example\n"
+            "--pandoc-args \"--toc --citeproc --bibliography refs.bib\"."
+        ),
     )
 
     parser.add_argument(
@@ -398,7 +447,7 @@ def _run_single(
 
     # Decide logging callback based on verbosity / quiet
     if args.quiet:
-        log_cb: Optional[Callable[[str], None]] = None
+        log_cb: Optional[Callable[[str], None]] = lambda _msg: None  # silence engine logs
     elif args.verbose >= 1:
         def log_cb(msg: str) -> None:
             sys.stderr.write(f"{colors.info}{msg}{colors.reset}\n")
@@ -489,11 +538,91 @@ def _run_single(
 
 
 # ---------------------------------------------------------------------------
+# Accessible math (MathJax) post-processing
+# ---------------------------------------------------------------------------
+
+
+def _accessible_math(
+    outp: Path, opts: Options, args: argparse.Namespace, colors: _Colors
+) -> None:
+    """Offer MathJax when the converted file contains math; write HTML copy."""
+    try:
+        md = outp.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    n_math = count_math(md)
+    enable = False
+    if n_math and args.mathjax == "yes":
+        enable = True
+    elif n_math and args.mathjax == "ask":
+        if sys.stdin.isatty():
+            try:
+                answer = input(
+                    f"{outp.name} contains {n_math} math expression(s). "
+                    "Enable MathJax so screen readers can read the math? [Y/n] "
+                )
+            except EOFError:
+                answer = ""
+            enable = answer.strip().lower() not in ("n", "no")
+        else:
+            enable = True
+
+    if not enable and not args.html:
+        return
+
+    try:
+        html_path = apply_mathjax(
+            outp, ocr_lang=opts.ocr_lang, enable_mathjax=enable, write_html=True
+        )
+    except Exception as exc:
+        if not args.quiet:
+            sys.stderr.write(f"{colors.err}Could not write accessible output:{colors.reset} {exc}\n")
+        return
+
+    if not args.quiet:
+        if enable:
+            sys.stderr.write(f"{colors.ok}MathJax enabled{colors.reset} for {outp.name}.\n")
+        if html_path:
+            sys.stderr.write(f"{colors.ok}Accessible HTML:{colors.reset} {html_path}\n")
+
+
+def _pandoc_export(outp: Path, opts: Options, args: argparse.Namespace, colors: _Colors) -> bool:
+    """Convert the Markdown output with pandoc (``--to``). Returns success."""
+    from . import pandoc_support as ps
+
+    popts = ps.PandocOptions(to_format=args.to, extra_args=args.pandoc_args)
+    dest = outp.with_suffix(ps.output_extension(args.to))
+    if dest == outp:
+        dest = outp.with_name(outp.stem + "_pandoc" + outp.suffix)
+    def log(msg: str) -> None:
+        sys.stderr.write(f"{colors.info}{msg}{colors.reset}\n")
+
+    verbose = args.verbose >= 1 and not args.quiet
+    try:
+        ps.convert(outp, dest, popts, ocr_lang=opts.ocr_lang, log_cb=log if verbose else None)
+    except Exception as exc:
+        sys.stderr.write(f"{colors.err}Pandoc error:{colors.reset} {exc}\n")
+        return False
+    if not args.quiet:
+        sys.stderr.write(f"{colors.ok}Pandoc:{colors.reset} {dest}\n")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Never crash on characters the console code page can't show (for
+    # example dashes on Windows code page 1252).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
+
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -568,6 +697,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ok = _run_single(inp, outp, opts, args, colors)
 
         if ok:
+            _accessible_math(outp, opts, args, colors)
+            if args.to and not _pandoc_export(outp, opts, args, colors):
+                failures += 1
             successes += 1
             if args.stats:
                 stats = _compute_stats(outp)

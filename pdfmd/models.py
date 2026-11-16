@@ -43,8 +43,16 @@ class Line:
 @dataclass
 class Block:
     lines: List[Line] = field(default_factory=list)
+    # Table metadata. These are real fields (not ad-hoc attributes) so that
+    # transforms that rebuild blocks with dataclasses.replace() keep them.
+    is_table: bool = False
+    table_grid: Optional[List[List[str]]] = None
+    table_type: str = ""
+    table_score: float = 0.0
 
     def is_empty(self) -> bool:
+        if self.is_table and self.table_grid:
+            return False
         for ln in self.lines:
             if any(sp.text.strip() for sp in ln.spans):
                 return False
@@ -75,6 +83,15 @@ class PageText:
 
         blocks: List[Block] = []
         for b in page_dict.get("blocks", []) or []:
+            if b.get("type") == "pdfmd_table":
+                # A table found from the PDF's ruling lines (extract.py).
+                grid = b.get("grid") or []
+                summary = " ".join(c for c in (grid[0] if grid else []) if c)
+                blocks.append(Block(
+                    lines=[Line(spans=[Span(text=summary or "table", size=float(b.get("size", 0.0)))])],
+                    is_table=True, table_grid=grid, table_type="ruled", table_score=10.0,
+                ))
+                continue
             if "lines" not in b:
                 # skip images and non-text blocks here
                 continue

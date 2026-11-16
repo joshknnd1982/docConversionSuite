@@ -119,6 +119,16 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
     res: List[str] = []
     i = 0
 
+    def is_structure(text: str) -> bool:
+        """Lines that must never be merged into, or merged away: headings,
+        table rows, display math, code fences, HTML, rules, quotes, lists."""
+        t = text.strip()
+        return (
+            t.startswith(("#", "|", "$$", "```", "~~~", "<", ">", "---", "***", "- ", "* ", "+ "))
+            or t.endswith("|")
+            or bool(re.match(r"^\d+[.)]\s", t))
+        )
+
     while i < len(lines):
         line = lines[i]
 
@@ -128,13 +138,14 @@ def _defragment_orphans(md: str, max_len: int = 45) -> str:
             and not lines[i - 1].strip()
             and not lines[i + 1].strip()
             and 0 < len(line.strip()) <= max_len
-            and not line.strip().startswith("#")
+            and not is_structure(line)
         ):
-            # Attach orphan to the previous non-blank line
+            # Attach orphan to the previous non-blank line, unless that line
+            # is a heading, a table row, math or other structure.
             j = len(res) - 1
             while j >= 0 and not res[j].strip():
                 j -= 1
-            if j >= 0:
+            if j >= 0 and not is_structure(res[j]):
                 res[j] = (res[j].rstrip() + " " + line.strip()).strip()
                 i += 2
                 continue

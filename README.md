@@ -1,13 +1,31 @@
-# PDF to Markdown Converter (pdfmd)
+# Document Conversion Suite
 
-**A refined, privacy-first desktop and CLI tool that converts PDFs — including scanned documents — into clean, structured Markdown. Built for researchers, professionals, and creators who demand accuracy, speed, and absolute data privacy.**
+**An accessible, privacy-first document converter. It turns PDFs, including scanned documents, into clean, structured Markdown with the pdfmd engine, makes math accessible with MathJax, writes accessible HTML, and converts between every format pandoc supports with all of pandoc's options. The desktop app is fully usable with a screen reader and with the keyboard alone.**
 
-**Fast. Local. Intelligent. Fully offline.**
+**Accessible. Local. Intelligent. Fully offline.**
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![Version](https://img.shields.io/badge/version-1.6.0-purple)
+![Version](https://img.shields.io/badge/version-1.7.0-purple)
+![Accessibility](https://img.shields.io/badge/screen%20readers-NVDA%20%7C%20JAWS%20%7C%20Narrator-blue)
+
+> **Download for Windows:** get `DocConversionSuite-1.7.0-setup.exe` from the [Releases page](https://github.com/joshknnd1982/docConversionSuite/releases). The installer is screen reader accessible.
+>
+> **Guides:** [Accessibility Guide](ACCESSIBILITY.md) (for people and AI models) · [Features Guide](FEATURES.md) (everything the app can do)
+
+Document Conversion Suite is built on **pdfmd**, the PDF to Markdown engine by Michael Neivandt, and on [pandoc](https://pandoc.org). The Python package and the command-line tool keep the name `pdfmd`.
+
+## What's new in 1.7.0
+
+* **Accessible desktop app**, rewritten in wxPython with native Windows controls: every control is labelled and in the Tab order, has spoken help text and a unique Alt+letter key; a standard menu bar shows every shortcut; progress and results are announced through NVDA, JAWS and other screen readers; focus is never lost. See [ACCESSIBILITY.md](ACCESSIBILITY.md).
+* **Accessible math**: when a document contains math, the app offers to enable MathJax 4 (default Yes), so math is spoken, readable in Braille and explorable with the arrow keys. Math inside sentences ("E = mc²") is detected too.
+* **Accessible HTML output** with document language, real headings and table headers, and MathJax math.
+* **Pandoc integration**: convert from and to every pandoc format (Word, EPUB, HTML, LaTeX, PDF, ODT, PowerPoint, reStructuredText, AsciiDoc, Typst, JATS and more) with citations, templates, reference documents, filters, PDF engines and any pandoc argument. Accessible math defaults per format.
+* **Scanned PDFs made accessible**: Auto OCR is the default; the app finds Tesseract wherever it is installed, explains scanned files when it's missing, and a Tesseract window (Ctrl+T) checks for updates, installs or updates Tesseract, and adds OCR languages.
+* **Table fidelity**: ruled tables are read from the PDF's drawn lines (every row, column and header kept); tables split across blocks are no longer repeated as text; tables stay tables in HTML (with column-header markup) and in every pandoc format.
+* **Windows installer** (Inno Setup) with Start menu guides, an optional Explorer "Convert with Document Conversion Suite" command, and optional pandoc installation.
+* **Command line**: `--mathjax`, `--html`, `--to FORMAT` and `--pandoc-args`.
 
 ---
 
@@ -24,7 +42,7 @@
   * [Automatic Table Detection](#-automatic-table-detection--reconstruction)
   * [Math-Aware Extraction](#-math-aware-extraction--latex-preservation)
   * [Scanned PDF Support](#-scanned-pdf-support-ocr)
-  * [Modern GUI Experience](#-modern-gui-experience)
+  * [Accessible GUI Experience](#-accessible-gui-experience)
 
 * [Interface Preview](#️-interface-preview)
 
@@ -218,19 +236,18 @@ Ideal for scientific PDFs in physics, mathematics, engineering, and chemistry.
 - Image coverage detection (>30% page area)
 - Combined signals trigger OCR automatically
 
-### 🎨 Modern GUI Experience
+### ♿ Accessible GUI Experience
 
-- **Dark/Light themes** — Obsidian-style dark mode (default) with instant toggle
-- **Multi-file batch conversion** — Select and convert multiple PDFs in one go
+- **Screen reader ready** — Native Windows controls with labels, roles, states and spoken help text (NVDA, JAWS, Narrator and others)
+- **Keyboard first** — Everything in the Tab order, a unique Alt+letter key for every control, standard menu bar with shortcuts, F1 for the full list
+- **Spoken status** — Start, progress, completion and errors announced through your screen reader
+- **Accessible math** — Offers MathJax when math is found; accessible HTML copy
+- **Pandoc built in** — Ctrl+P converts any document to any pandoc format
+- **Multi-file batch conversion** — List of every queued file; Delete removes a file
 - **Safe output naming** — Automatic `_1`, `_2` suffixes prevent accidental overwrites
-- **OCR language selector** — Choose Tesseract language from a dropdown or type a custom code
-- **Live progress tracking** — Determinate progress bar with per-file status in batch mode
-- **Real-time console** — View extraction and conversion logs as they happen
-- **Quick access** — "Open Output Folder" link to finished Markdown
-- **Non-blocking conversion** — Cancel long-running jobs anytime with Esc
-- **Keyboard shortcuts** — Power-user workflow (Ctrl+Enter to convert)
-- **Persistent settings** — Theme, paths, options, and profiles saved between sessions
-- **Conversion profiles** — Built-in and custom presets for different document types
+- **Conversion profiles** — Built-in presets (including Math and science) and your own
+- **Themes** — Follow Windows, light or dark; High Contrast respected
+- **Persistent settings** — Paths, options, profiles and pandoc settings saved between sessions
 
 ---
 
@@ -286,7 +303,11 @@ Each module maintains a single responsibility, ensuring the system remains clean
 | **`pipeline.py`**  | End-to-end orchestration: extract → structure → transform → tables → equations → render                                |
 | **`models.py`**    | Typed data structures: `PageText`, `Block`, `Line`, `Span`, `Options` (including `ocr_lang`)                           |
 | **`utils.py`**     | Platform helpers, OCR detection utilities, file handling, temp-file safety, logging tools                              |
-| **`app_gui.py`**   | Tkinter GUI: multi-file batch conversion, profiles, theming, progress tracking, encrypted-PDF dialogs                  |
+| **`app_gui.py`**   | Accessible wxPython GUI (Document Conversion Suite): batch conversion, profiles, MathJax prompt, pandoc export, screen reader announcements |
+| **`gui_a11y.py`**  | Accessibility helpers: screen reader announcer, accessible descriptions, window-wide Alt+letter keys |
+| **`gui_pandoc.py`** | Accessible pandoc converter window |
+| **`mathjax.py`**   | Math detection (including Unicode math in sentences), MathJax loader, accessible HTML writer |
+| **`pandoc_support.py`** | Finds pandoc, lists formats, builds pandoc arguments with accessible defaults, converts |
 | **`cli.py`**       | Command-line interface for batch automation, scripting, language selection, and secured password prompts               |
 
 ### 🏗️ Design Philosophy
@@ -360,11 +381,11 @@ This architecture forms a scalable base for long-term evolution of **pdfmd**.
 
 ```bash
 # Clone repository
-git clone https://github.com/M1ck4/pdfmd.git
-cd pdfmd
+git clone https://github.com/joshknnd1982/docConversionSuite.git
+cd docConversionSuite
 
 # Install dependencies manually
-pip install pymupdf pillow pytesseract ocrmypdf
+pip install pymupdf pillow pytesseract ocrmypdf markdown wxPython accessible_output2
 
 # Launch GUI
 python -m pdfmd.app_gui
@@ -374,8 +395,8 @@ python -m pdfmd.app_gui
 
 ```bash
 # Clone and install
-git clone https://github.com/M1ck4/pdfmd.git
-cd pdfmd
+git clone https://github.com/joshknnd1982/docConversionSuite.git
+cd docConversionSuite
 
 # Minimal install (native text extraction only)
 pip install -e .
@@ -400,7 +421,7 @@ pdfmd input.pdf
 2. **Install Python packages (if running without the package installer):**
 
    ```cmd
-   pip install pymupdf pillow pytesseract ocrmypdf
+   pip install pymupdf pillow pytesseract ocrmypdf markdown wxPython accessible_output2
    ```
 
 3. **Verify installation:**
@@ -421,7 +442,7 @@ brew install tesseract-lang    # all language packs
 brew install ocrmypdf
 
 # Install Python dependencies manually
-pip install pymupdf pillow pytesseract ocrmypdf
+pip install pymupdf pillow pytesseract ocrmypdf markdown wxPython accessible_output2
 ```
 
 #### Linux (Ubuntu/Debian)
@@ -435,238 +456,54 @@ sudo apt-get install tesseract-ocr ocrmypdf
 sudo apt-get install tesseract-ocr-deu tesseract-ocr-fra tesseract-ocr-jpn
 
 # Python dependencies
-pip install pymupdf pillow pytesseract ocrmypdf
+pip install pymupdf pillow pytesseract ocrmypdf markdown wxPython accessible_output2
 ```
 
-### Windows Standalone Executable
+### Windows Installer (recommended)
 
-Download the latest `.exe` from [Releases](https://github.com/M1ck4/pdfmd/releases) — no Python required.
+Download `DocConversionSuite-<version>-setup.exe` from [Releases](https://github.com/joshknnd1982/docConversionSuite/releases). No Python required. The installer is screen reader accessible and installs for the current user without an administrator prompt.
 
-**Note:** Tesseract must still be installed separately for OCR functionality.
+It installs `DocConversionSuite.exe` (the accessible GUI), `pdfmd-cli.exe` (the command line), and the guides. Optional tasks: desktop shortcut, Explorer "Convert with Document Conversion Suite" for PDFs, and Pandoc (via winget).
+
+**Note:** Tesseract must still be installed separately for OCR functionality. Pandoc is needed for pandoc conversions.
+
+### Building the installer yourself
+
+```bash
+pip install -r requirements.txt pyinstaller
+python packaging/build.py
+```
+
+Requires Inno Setup 6. The installer is written to `dist/installer/`.
 
 ---
 
 ## 🚀 Usage
 
-### 🖥️ GUI Application
+### 🖥️ GUI Application (Document Conversion Suite)
 
 #### Launching the GUI
 
-The graphical interface can be started in several ways:
+* Installed: Start menu > **Document Conversion Suite**, or right-click a PDF (or press the Applications key on it) and choose **Convert with Document Conversion Suite**.
+* From source: `python -m pdfmd.app_gui` (requires `pip install wxPython accessible_output2`).
 
-```bash
-# If installed as a package:
-python -m pdfmd.app_gui
+#### Quick workflow (keyboard)
 
-# Direct execution (from package directory):
-python app_gui.py
-```
+1. **Ctrl+O** adds PDF files to the **Input PDF files** list (Alt+I). Delete removes the selected file.
+2. The output path is suggested automatically; change it with **Alt+O** or **Ctrl+Shift+O**.
+3. Choose a **Profile** (Alt+E), **OCR mode** (Alt+M) and other options.
+4. Press **F5** (or Ctrl+Enter) to convert. Progress is announced at 25, 50 and 75 percent.
+5. If math is found, choose **Enable MathJax** (the default) for accessible math and an accessible HTML copy.
+6. **Ctrl+Shift+M** opens the Markdown file, **Ctrl+Shift+H** the HTML file, **Ctrl+Shift+F** the folder.
+7. **Ctrl+P** opens **Convert Any Document with Pandoc** for Word, EPUB, HTML, LaTeX and every other pandoc format.
 
-#### Quick Workflow
+The full keyboard reference, including every Alt+letter key, is in [ACCESSIBILITY.md](ACCESSIBILITY.md) and in the program (F1). Every feature is described in [FEATURES.md](FEATURES.md).
 
-**Basic Conversion in 7 Steps:**
+#### Passwords, cancellation and settings
 
-1. **📂 Select Input PDF(s)**
-   - Click **Browse...** next to "Input PDF(s)"
-   - Select one or multiple PDF files (multi-select supported)
-   - For multiple files, the entry shows the count and first filename
-   - Paths are remembered between sessions
-
-2. **💾 Choose Output Location**
-   - **Single file:** Output path is auto-suggested as `input.md`
-   - **Multiple files:** Output defaults to the input folder; Browse opens a folder picker
-   - Click **Browse...** to change location
-   - Or manually edit the path
-
-3. **⚙️ Select Profile**
-   - Choose from built-in profiles:
-     - **Default** — Balanced settings for most documents
-     - **Academic article** — Optimised for papers with equations
-     - **Slides / handouts** — Image export + page breaks
-     - **Scan-heavy / OCR-first** — Force OCR on all pages
-   - Or use your custom saved profiles
-
-4. **🔧 Configure Options**
-   
-   **OCR Settings:**
-   - **OCR mode:**
-     - `off` — Native text extraction (fastest)
-     - `auto` — Detect scanned pages automatically ✨ recommended
-     - `tesseract` — Force OCR on all pages
-     - `ocrmypdf` — High-quality OCR preprocessing
-   - **Language:** Select from 17 common Tesseract language codes or type any valid code. Combine with `+` for multi-language documents (e.g. `eng+fra`).
-   
-   **Output Options:**
-   - ☑️ **Export images** — Save images to `_assets/` folder
-   - ☑️ **Insert page breaks** — Add `---` between pages
-   - ☑️ **Preview first 3 pages** — Quick test before full conversion
-   
-   **Text Processing:**
-   - ☑️ **Remove repeating header / footer** — Auto-detect and strip
-   - ☑️ **Promote CAPS to headings** — Treat ALL CAPS as section titles
-   - ☑️ **Defragment short orphans** — Merge isolated short lines
-   
-   **Fine-Tuning:**
-   - **Heading size ratio** (1.0–2.5) — Font size threshold for headings
-   - **Orphan max length** (10–120) — Character limit for line merging
-
-5. **▶️ Convert**
-   - Click **▶ Convert**
-   - Or press **Ctrl+Enter** (keyboard shortcut)
-   - The conversion runs in the background
-
-6. **📊 Monitor Progress**
-   - Watch the **progress bar** for completion status
-   - For batch conversions, see `[1/5]`, `[2/5]` etc. in the log
-   - View **live logs** in the console panel
-   - See current status in the status line
-   - Press **Stop** or **Esc** to cancel if needed
-
-7. **✅ Open Output**
-   - When complete, click **Open folder** link
-   - Opens the output directory in your file manager
-   - Your Markdown file(s) are ready to use
-
-#### Batch Conversion
-
-The GUI supports converting multiple PDFs in a single run:
-
-1. **Click Browse** and select multiple PDF files (Ctrl+click or Shift+click)
-2. The input field shows the file count: *"52 files selected, first: report.pdf, +51 more"*
-3. **Output** automatically switches to a folder picker
-4. Each PDF produces its own `<filename>.md` in the output folder
-5. **No accidental overwrites** — if `report.md` already exists, the output is saved as `report_1.md`, `report_2.md`, etc.
-6. Progress scales across all files with per-file log headers
-7. If one file fails, the rest continue; a summary shows successes and failures
-
-#### Profiles
-
-**Built-in Profiles:**
-
-- **Default** — Balanced settings for general documents, auto-detect headers/footers, smart heading detection
-- **Academic article** — Optimised for research papers, higher orphan threshold (60 chars), tighter heading ratio (1.10), OCR mode: `auto`
-- **Slides / handouts** — Export images automatically, insert page breaks between slides, disabled header/footer removal, OCR mode: `auto`
-- **Scan-heavy / OCR-first** — Force Tesseract OCR on all pages, no CAPS-to-heading conversion, best for old scanned documents
-
-**Custom Profiles:**
-
-1. Adjust settings to your preference
-2. Click **Save...**
-3. Enter a profile name
-4. Profile is saved and available for future use (including OCR language)
-
-To delete: Select a custom profile, click **Delete**, confirm. (Built-in profiles cannot be deleted.)
-
-#### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| **Ctrl+O** | Browse for input PDF(s) |
-| **Ctrl+Shift+O** | Browse for output location |
-| **Ctrl+Enter** | Start conversion |
-| **Esc** | Stop/cancel conversion |
-
-#### GUI Features
-
-**🎨 Themes**
-
-Toggle between **Dark** and **Light** themes. Theme preference is saved between sessions.
-- **Dark** — Obsidian-inspired dark mode with layered panels and purple accents
-- **Light** — Clean light mode with white cards on grey
-
-**🌐 OCR Language**
-
-The language selector next to the OCR mode dropdown lets you choose the Tesseract language for OCR. It comes pre-loaded with 17 common languages:
-
-`eng`, `deu`, `fra`, `spa`, `ita`, `por`, `nld`, `pol`, `rus`, `chi_sim`, `chi_tra`, `jpn`, `kor`, `ara`, `hin`, `tur`, `vie`
-
-The field is editable — type any Tesseract language code directly, or combine languages with `+` (e.g. `eng+deu`). The selected language is saved with your config and profiles.
-
-**Note:** The corresponding Tesseract language pack must be installed on your system for OCR to work in that language.
-
-**🔒 Password Protection**
-
-For encrypted PDFs:
-1. Start conversion as normal
-2. Password dialog appears automatically
-3. Enter password (input is hidden)
-4. Click OK or press Enter
-5. Conversion proceeds with decrypted content
-
-Password is used in-memory only, never logged or saved to disk, not passed to external processes.
-
-**⚠️ Cancellation**
-
-Stop a long-running conversion by clicking **Stop** or pressing **Esc**. Current step completes, then conversion stops gracefully. In batch mode, remaining files are skipped.
-
-**📝 Live Logging**
-
-The console panel shows real-time progress:
-```
-[pipeline] Extracting text...
-[pipeline] Transforming pages...
-[profile] Applied profile: Academic article
-[pipeline] Removed repeating edges → header='Chapter 1', footer='- - 1'
-[pipeline] Rendering Markdown...
-[pipeline] Saved → /path/to/output.md
-```
-
-In batch mode, each file is logged with a numbered header:
-```
-============================================================
-[1/5] report.pdf
-============================================================
-Input:  C:\Documents\report.pdf
-Output: C:\Documents\output\report.md
-...
-```
-
-**💾 Persistent Settings**
-
-Automatically saved between sessions:
-- Last input/output paths
-- Current options and settings (including OCR language)
-- Custom profiles
-- Theme preference
-
-Configuration stored at: `~/.pdfmd_gui.json`
-
-#### Common GUI Workflows
-
-**Quick Preview:**
-1. Select your PDF
-2. Check **Preview first 3 pages**
-3. Click **▶ Convert**
-4. Review output to verify settings
-5. Uncheck preview and run full conversion
-
-**Batch Processing:**
-1. Click Browse and select all PDFs to convert
-2. Set output folder (or use the auto-suggested input directory)
-3. Choose your profile and options
-4. Click **▶ Convert** — all files are processed sequentially
-5. Review the batch summary in the log
-
-**Scanned Documents:**
-1. Select scanned PDF
-2. Set OCR mode to **auto** or **tesseract**
-3. Select the correct **Language** for the document
-4. Consider enabling **Export images**
-5. Click **▶ Convert**
-6. Monitor OCR progress in logs (may take several minutes)
-
-**Non-English Documents:**
-1. Select your PDF
-2. Set OCR mode to **auto** or **tesseract**
-3. Choose the appropriate **Language** from the dropdown (e.g. `deu` for German, `jpn` for Japanese)
-4. For mixed-language documents, type a combined code: `eng+fra`
-5. Click **▶ Convert**
-
-**Academic Papers:**
-1. Select **Academic article** profile
-2. Verify settings (OCR: auto, heading ratio: 1.10)
-3. Click **▶ Convert**
-4. Tables and equations are automatically detected and formatted
+* Encrypted PDFs: a standard password dialog appears; the password is used only in memory.
+* Stop a conversion with the Stop button (Alt+S), Shift+F5 or Esc.
+* Settings, profiles and pandoc settings are stored in `~/.pdfmd_gui.json`.
 
 ---
 
@@ -1008,7 +845,7 @@ fi
 
 For developers wanting to integrate **pdfmd** into their own Python code, a full, detailed API reference is available:
 
-👉 **[Full API Reference](https://github.com/M1ck4/pdfmd/blob/main/doc/API.md)**
+👉 **[Full API Reference](doc/API.md)**
 
 This document covers:
 
@@ -1368,10 +1205,13 @@ Built with:
 
 ## 🔗 Links
 
-- **Repository:** https://github.com/M1ck4/pdfmd
-- **Issues:** https://github.com/M1ck4/pdfmd/issues
-- **Releases:** https://github.com/M1ck4/pdfmd/releases
-- **API Reference:** [doc/API.md](https://github.com/M1ck4/pdfmd/blob/main/doc/API.md)
+- **Repository:** https://github.com/joshknnd1982/docConversionSuite
+- **Upstream pdfmd engine:** https://github.com/M1ck4/pdfmd
+- **Issues:** https://github.com/joshknnd1982/docConversionSuite/issues
+- **Accessibility Guide:** [ACCESSIBILITY.md](ACCESSIBILITY.md)
+- **Features Guide:** [FEATURES.md](FEATURES.md)
+- **Releases:** https://github.com/joshknnd1982/docConversionSuite/releases
+- **API Reference:** [doc/API.md](doc/API.md)
 
 ---
 

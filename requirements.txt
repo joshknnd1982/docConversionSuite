@@ -3,6 +3,13 @@
 # Core PDF processing (required)
 pymupdf>=1.23.0
 
+# Accessible HTML output (required)
+markdown>=3.4
+
+# Accessible desktop GUI
+wxPython>=4.2
+accessible_output2>=0.17
+
 # OCR dependencies (optional but recommended for OCR modes)
 pytesseract>=0.3.10
 Pillow>=10.0.0

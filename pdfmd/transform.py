@@ -486,8 +486,18 @@ def _annotate_tables_on_page(page: PageText, debug: bool = False) -> PageText:
     table_map = {det.block_index: det for det in detections}
     
     new_blocks: List[Block] = []
-    
+
+    # A table can span several consecutive blocks (one per row, for
+    # example). The first block carries the table; the others were consumed
+    # by it and must not be rendered again as plain text.
+    consumed: set = set()
+    for det in detections:
+        for extra in range(det.block_index + 1, det.block_index + max(1, det.n_blocks)):
+            consumed.add(extra)
+
     for idx, blk in enumerate(page.blocks):
+        if idx in consumed:
+            continue
         if idx in table_map:
             det = table_map[idx]
             

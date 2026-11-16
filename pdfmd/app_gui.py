@@ -1,22 +1,24 @@
 """
-Tkinter GUI for pdfmd – UI/UX with light/dark themes, profiles, and cancel support.
+Document Conversion Suite: accessible wxPython GUI for the pdfmd engine.
 
-This GUI is a front-end for the offline pdfmd engine. It:
+This GUI is a front end for the offline pdfmd engine, designed to be fully
+usable with a screen reader (NVDA, JAWS, Narrator and others) and with the
+keyboard alone:
 
-- Lets the user pick an input PDF and output Markdown file.
-- Exposes the core Options (OCR, preview, headings, defrag, etc.).
-- Streams pipeline logs to a console-like panel.
-- Shows a determinate progress bar and status line.
-- Allows the user to CANCEL a long-running conversion (e.g. OCR).
-- Supports Light and Dark themes (dark is Obsidian-style, not grey).
-- Remembers theme, paths, and options globally via a small JSON config.
-- Provides conversion profiles (built-in and user-defined).
-- Supports keyboard shortcuts for common actions.
+- Uses native Windows controls, so every control has a role, a name and a
+  state that screen readers can read.
+- Every control has a visible label that is also its accessible name, plus
+  an accessible description (spoken by screen readers) with help text.
+- Every control is in the tab order and has an Alt+letter access key.
+- A standard menu bar exposes every command, with shortcuts shown next to
+  each menu item.
+- Status changes (start, progress, completion, errors) are announced through
+  the running screen reader.
+- When a converted document contains math, pdfmd offers to enable MathJax
+  so the math can be spoken, read in Braille and explored with the keyboard.
 
 Run as:
     python -m pdfmd.app_gui
-or:
-    python app_gui.py      (from the package folder)
 """
 from __future__ import annotations
 
@@ -24,72 +26,107 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import threading
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# DPI FIX – stop blurry UI on Windows when scaling > 100%
+# DPI awareness: crisp text at Windows display scaling above 100%.
+# Must run before wx creates any window.
 # ---------------------------------------------------------------------------
 if platform.system() == "Windows":
     try:
         import ctypes
-        ctypes.windll.user32.SetProcessDPIAware()  # enable system DPI awareness
+
+        try:  # Per-monitor v2 (Windows 10 1703+)
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        except Exception:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
-# ---------------------------------------------------------------------------
+
+import wx  # noqa: E402
 
 # Optional PyMuPDF import for password probing (GUI pre-checks)
 try:
-    import fitz  # type: ignore
+    try:  # PyMuPDF >= 1.24.3 prefers this name (no deprecation warning)
+        import pymupdf as fitz  # type: ignore
+    except ImportError:
+        import fitz  # type: ignore
 except Exception:  # pragma: no cover - optional
     fitz = None  # type: ignore
 
 # --- Robust imports: package or script mode ---------------------------------
 try:
-    # Package style, e.g. `python -m pdfmd.app_gui`
+    from pdfmd import __version__
     from pdfmd.models import Options
     from pdfmd.pipeline import pdf_to_markdown
     from pdfmd.utils import os_display_path
-except ImportError:  # fallback for `python app_gui.py`
-    import sys
-
-    _HERE = Path(__file__).resolve().parent
-    if str(_HERE) not in sys.path:
-        sys.path.insert(0, str(_HERE))
-    from models import Options
-    from pipeline import pdf_to_markdown
-    from utils import os_display_path
+    from pdfmd.mathjax import apply_mathjax, count_math
+    from pdfmd import pandoc_support as ps
+    from pdfmd.gui_a11y import Announcer, MnemonicHandler, describe
+    from pdfmd.gui_pandoc import PandocDialog
+    from pdfmd import tesseract_support as ts
+    from pdfmd.gui_tesseract import TesseractDialog
+except ImportError:  # `python app_gui.py` from inside the package folder
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from pdfmd import __version__
+    from pdfmd.models import Options
+    from pdfmd.pipeline import pdf_to_markdown
+    from pdfmd.utils import os_display_path
+    from pdfmd.mathjax import apply_mathjax, count_math
+    from pdfmd import pandoc_support as ps
+    from pdfmd.gui_a11y import Announcer, MnemonicHandler, describe
+    from pdfmd.gui_pandoc import PandocDialog
+    from pdfmd import tesseract_support as ts
+    from pdfmd.gui_tesseract import TesseractDialog
 # ---------------------------------------------------------------------------
 
-OCR_CHOICES = ("off", "auto", "tesseract", "ocrmypdf")
+APP_NAME = "Document Conversion Suite"
+APP_TITLE = "Document Conversion Suite"
 CONFIG_PATH = Path.home() / ".pdfmd_gui.json"
 
-# Common Tesseract language codes (user can also type a custom code).
-OCR_LANG_CHOICES = (
-    "eng",          # English
-    "deu",          # German
-    "fra",          # French
-    "spa",          # Spanish
-    "ita",          # Italian
-    "por",          # Portuguese
-    "nld",          # Dutch
-    "pol",          # Polish
-    "rus",          # Russian
-    "chi_sim",      # Chinese (Simplified)
-    "chi_tra",      # Chinese (Traditional)
-    "jpn",          # Japanese
-    "kor",          # Korean
-    "ara",          # Arabic
-    "hin",          # Hindi
-    "tur",          # Turkish
-    "vie",          # Vietnamese
-)
+OCR_MODES: List[Tuple[str, str]] = [
+    ("off", "Off: native text only (fastest)"),
+    ("auto", "Auto: OCR only scanned pages"),
+    ("tesseract", "Tesseract: OCR every page"),
+    ("ocrmypdf", "OCRmyPDF: high-fidelity OCR"),
+]
+OCR_CODES = [code for code, _ in OCR_MODES]
 
+# Common Tesseract language codes (the user can also type a custom code).
+OCR_LANGS: List[Tuple[str, str]] = [
+    ("eng", "English"),
+    ("deu", "German"),
+    ("fra", "French"),
+    ("spa", "Spanish"),
+    ("ita", "Italian"),
+    ("por", "Portuguese"),
+    ("nld", "Dutch"),
+    ("pol", "Polish"),
+    ("rus", "Russian"),
+    ("chi_sim", "Chinese, Simplified"),
+    ("chi_tra", "Chinese, Traditional"),
+    ("jpn", "Japanese"),
+    ("kor", "Korean"),
+    ("ara", "Arabic"),
+    ("hin", "Hindi"),
+    ("tur", "Turkish"),
+    ("vie", "Vietnamese"),
+]
 
-DEFAULT_OPTIONS = {
-    "ocr_mode": OCR_CHOICES[0],
+MATH_MODES: List[Tuple[str, str]] = [
+    ("ask", "Ask me (MathJax recommended)"),
+    ("always", "Always enable MathJax"),
+    ("never", "Never enable MathJax"),
+]
+MATH_CODES = [code for code, _ in MATH_MODES]
+
+THEMES = ("System", "Light", "Dark")
+
+DEFAULT_OPTIONS: Dict[str, object] = {
+    "ocr_mode": "auto",
     "ocr_lang": "eng",
     "preview": False,
     "export_images": False,
@@ -99,9 +136,11 @@ DEFAULT_OPTIONS = {
     "defrag": True,
     "heading_ratio": 1.15,
     "orphan_len": 45,
+    "math_mode": "ask",
+    "html_copy": False,
 }
 
-BUILTIN_PROFILES = {
+BUILTIN_PROFILES: Dict[str, Dict[str, object]] = {
     "Default": DEFAULT_OPTIONS,
     "Academic article": {
         "ocr_mode": "auto",
@@ -113,6 +152,19 @@ BUILTIN_PROFILES = {
         "defrag": True,
         "heading_ratio": 1.10,
         "orphan_len": 60,
+    },
+    "Math and science (MathJax)": {
+        "ocr_mode": "auto",
+        "preview": False,
+        "export_images": False,
+        "page_breaks": False,
+        "rm_edges": True,
+        "caps_to_headings": True,
+        "defrag": True,
+        "heading_ratio": 1.10,
+        "orphan_len": 60,
+        "math_mode": "always",
+        "html_copy": True,
     },
     "Slides / handouts": {
         "ocr_mode": "auto",
@@ -138,1113 +190,1478 @@ BUILTIN_PROFILES = {
     },
 }
 
+SHORTCUTS_TEXT = """Document Conversion Suite keyboard shortcuts
+
+Commands
+  Ctrl+O              Add PDF files
+  Ctrl+Shift+O        Choose output file or folder
+  F5 or Ctrl+Enter    Start conversion
+  Shift+F5            Stop conversion
+  Esc                 Stop conversion (while converting)
+  Ctrl+Shift+F        Open the output folder
+  Ctrl+Shift+M        Open the converted Markdown file
+  Ctrl+Shift+H        Open the accessible HTML file
+  Ctrl+Shift+S        Speak the current status
+  Ctrl+P              Convert with Pandoc (Word, EPUB, HTML, LaTeX and more)
+  Ctrl+T              Tesseract OCR: install, update, add languages
+  Ctrl+S              Save current settings as a profile
+  Delete              Remove selected files (in the input list)
+  F1                  This help
+  Alt+F4              Exit
+
+Go to a control (hold Alt)
+  Alt+I   Input PDF files list
+  Alt+A   Add PDFs button
+  Alt+R   Remove Selected button
+  Alt+Y   Empty List button
+  Alt+O   Output file or folder
+  Alt+B   Browse Output button
+  Alt+E   Profile
+  Alt+M   OCR mode
+  Alt+G   OCR language
+  Alt+X   Export images
+  Alt+K   Insert page breaks
+  Alt+3   Preview first 3 pages only
+  Alt+T   Remove repeating header and footer text
+  Alt+U   Promote uppercase lines to headings
+  Alt+J   Join short orphan lines into paragraphs
+  Alt+Z   Heading size ratio
+  Alt+W   Orphan line width
+  Alt+Q   When equations are found (MathJax)
+  Alt+N   Also save an accessible HTML copy
+  Alt+C   Convert button
+  Alt+S   Stop button
+  Alt+D   Open Output Folder button
+  Alt+L   Conversion log
+
+Menus
+  Alt+F   File menu
+  Alt+P   Profiles menu
+  Alt+V   View menu
+  Alt+H   Help menu
+
+Convert with Pandoc window (Ctrl+P)
+  Ctrl+Tab            Next page of settings
+  Ctrl+Shift+Tab      Previous page of settings
+  F5 or Alt+V         Convert
+  Esc                 Close
+  Page 1, Files and format: Alt+I input files, Alt+A add, Alt+R remove,
+    Alt+F input format, Alt+O output format, Alt+D output folder,
+    Alt+B browse, Alt+X also export PDF conversions, Alt+G pandoc log
+  Page 2, Document options: Alt+S standalone, Alt+C table of contents,
+    Alt+N number sections, Alt+E embed resources, Alt+D contents depth,
+    Alt+M math rendering, Alt+H highlighting, Alt+W wrapping, Alt+T title,
+    Alt+L language, Alt+G shift heading levels
+  Page 3, Citations, templates and filters: Alt+C citations,
+    Alt+B bibliography, Alt+I choose bibliography, Alt+S citation style,
+    Alt+F choose style, Alt+R reference document, Alt+U choose document,
+    Alt+T template, Alt+M choose template, Alt+L filters, Alt+E choose
+    filter, Alt+N PDF engine, Alt+X extra pandoc arguments
+  Alt+P               Install Pandoc (shown when pandoc is missing)
+
+Tesseract OCR window (Ctrl+T)
+  Alt+S status, Alt+U check for updates, Alt+I install or update,
+  Alt+L installed languages, Alt+A add language, Alt+Q quality,
+  Alt+D download language, Alt+C or Esc close
+
+Accessible math
+  When a converted document contains math, the suite offers to enable
+  MathJax (the answer defaults to Yes). MathJax adds a loader to the
+  Markdown file and saves an accessible HTML copy, where screen readers
+  speak each expression, it can be read in Braille, and you can explore
+  it piece by piece with the arrow keys.
+"""
+
 
 class UserCancelled(Exception):
     """Signal that the user requested cancellation."""
-    pass
 
 
-class ToolTip:
-    """Themed tooltip with Obsidian-style appearance."""
+# ---------------------------------------------------------------------------
+# Accessibility helpers
+# ---------------------------------------------------------------------------
 
-    def __init__(self, widget: tk.Widget, text: str, delay_ms: int = 400) -> None:
-        self.widget = widget
-        self.text = text
-        self.delay_ms = delay_ms
-        self._after_id: str | None = None
-        self._tip: tk.Toplevel | None = None
-        widget.bind("<Enter>", self._on_enter, add="+")
-        widget.bind("<Leave>", self._on_leave, add="+")
-        widget.bind("<ButtonPress>", self._on_leave, add="+")
 
-    def _on_enter(self, _event=None) -> None:
-        if self._after_id is None:
-            self._after_id = self.widget.after(self.delay_ms, self._show)
-
-    def _on_leave(self, _event=None) -> None:
-        if self._after_id is not None:
-            self.widget.after_cancel(self._after_id)
-            self._after_id = None
-        self._hide()
-
-    def _show(self) -> None:
-        if self._tip is not None:
-            return
-        try:
-            x, y, _, h = self.widget.bbox("insert")
-        except tk.TclError:
-            x = y = h = 0
-        x += self.widget.winfo_rootx() + 20
-        y += self.widget.winfo_rooty() + h + 16
-
-        tip = tk.Toplevel(self.widget)
-        tip.wm_overrideredirect(True)
-        tip.wm_geometry(f"+{x}+{y}")
-        # Dark tooltip regardless of theme
-        tip.configure(bg="#1a1a1a")
-        frame = tk.Frame(
-            tip, bg="#1a1a1a", padx=10, pady=6,
-            highlightbackground="#444444", highlightthickness=1,
-        )
-        frame.pack(fill="both", expand=True)
-        label = tk.Label(
-            frame, text=self.text, justify="left", wraplength=340,
-            bg="#1a1a1a", fg="#cccccc", font=("Segoe UI", 9),
-        )
-        label.pack()
-        self._tip = tip
-
-    def _hide(self) -> None:
-        if self._tip is not None:
-            self._tip.destroy()
-            self._tip = None
-
-class PdfMdApp(tk.Tk):
-    def __init__(self) -> None:
+class PdfDropTarget(wx.FileDropTarget):
+    def __init__(self, frame: "PdfMdFrame") -> None:
         super().__init__()
+        self.frame = frame
 
-        self.title("PDF → Markdown (Offline, OCR-capable)")
-        self.geometry("1020x680")
-        self.minsize(960, 620)
+    def OnDropFiles(self, x, y, filenames):  # noqa: N802
+        self.frame.add_inputs(filenames)
+        return True
 
-        self._worker: threading.Thread | None = None
-        self._cancel_requested: bool = False
-        self._last_output_path: str | None = None
-        self._input_paths: list[str] = []
-        self.custom_profiles: dict[str, dict] = {}
 
-        self._init_style()
-        self._build_vars()
-        self._load_config()
-        self._build_ui()
-        self._wire_events()
-        self._apply_theme()
-        self._populate_profiles()
+class ShortcutsDialog(wx.Dialog):
+    """Keyboard shortcut reference in a read-only, focusable text field."""
 
-        self._set_status("Ready.", kind="info")
-
-    # ------------------------------------------------------------------ style
-    def _init_style(self) -> None:
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-
-        # -- Core typography --
-        _UI = "Segoe UI"
-        self._fonts = {
-            "body":     (_UI, 10),
-            "body_sm":  (_UI, 9),
-            "bold":     (_UI, 10, "bold"),
-            "section":  (_UI, 11, "bold"),
-            "heading":  (_UI, 13, "bold"),
-            "log":      ("Consolas", 9),
-            "btn":      (_UI, 10),
-            "btn_accent": (_UI, 11, "bold"),
-        }
-
-        style.configure(".", font=self._fonts["body"])
-        style.configure("TLabel", font=self._fonts["body"])
-        style.configure("TButton", font=self._fonts["btn"], padding=(10, 5))
-        style.configure("TCheckbutton", font=self._fonts["body"])
-
-        style.configure("Status.TLabel", font=self._fonts["body_sm"])
-        style.configure("StatusError.TLabel", font=self._fonts["body_sm"])
-        style.configure("StatusInfo.TLabel", font=self._fonts["body_sm"])
-
-        # Section heading style (for manual labels used as group headers)
-        style.configure("Section.TLabel", font=self._fonts["section"])
-
-        # Muted secondary text
-        style.configure("Muted.TLabel", font=self._fonts["body_sm"])
-
-        # Accent button (Convert)
-        style.configure("Accent.TButton", font=self._fonts["btn_accent"], padding=(20, 8))
-
-        # Card frames — padding provides internal breathing room
-        style.configure(
-            "Card.TLabelframe",
-            padding=(14, 10, 14, 12),
-            borderwidth=1,
-            relief="flat",
+    def __init__(self, parent: wx.Window) -> None:
+        super().__init__(parent, title="Keyboard Shortcuts", size=(620, 560),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        lbl = wx.StaticText(panel, label="&Keyboard shortcuts:")
+        self.text = wx.TextCtrl(
+            panel, value=SHORTCUTS_TEXT.replace("\n", "\r\n"),
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP,
         )
-        style.configure("Card.TLabelframe.Label", font=self._fonts["section"])
+        self.text.SetFont(wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE)))
+        close = wx.Button(panel, wx.ID_CLOSE, "&Close")
+        sizer.Add(lbl, 0, wx.ALL, 8)
+        sizer.Add(self.text, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        sizer.Add(close, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
+        panel.SetSizer(sizer)
+        close.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CLOSE))
+        self.SetEscapeId(wx.ID_CLOSE)
+        self.SetAffirmativeId(wx.ID_CLOSE)
+        close.SetDefault()
+        self.text.SetInsertionPoint(0)
+        self.text.SetFocus()
+        self.CentreOnParent()
 
-        # Separator style for visual dividers between option groups
-        style.configure("Gray.TSeparator", background="#333333")
 
-        style.configure("Log.TFrame", padding=0)
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
 
-    # ------------------------------------------------------------------- state
-    def _build_vars(self) -> None:
-        self.in_path_var = tk.StringVar()
-        self.out_path_var = tk.StringVar()
 
-        self.ocr_var = tk.StringVar(value=OCR_CHOICES[0])
-        self.ocr_lang_var = tk.StringVar(value="eng")
-        self.preview_var = tk.BooleanVar(value=False)
-        self.export_images_var = tk.BooleanVar(value=False)
-        self.page_breaks_var = tk.BooleanVar(value=False)
-        self.rm_edges_var = tk.BooleanVar(value=True)
-        self.caps_to_headings_var = tk.BooleanVar(value=True)
-        self.defrag_var = tk.BooleanVar(value=True)
-        self.heading_ratio_var = tk.DoubleVar(value=1.15)
-        self.orphan_len_var = tk.IntVar(value=45)
+class PdfMdFrame(wx.Frame):
+    def __init__(self, config: dict, initial_files: Optional[List[str]] = None) -> None:
+        super().__init__(None, title=APP_TITLE, size=(980, 820))
+        self.SetMinSize((760, 640))
 
-        # Dark is the default; Light is the alternate
-        self.theme_var = tk.StringVar(value="Dark")
+        self.announcer = Announcer()
+        self._accessibles: List[wx.Accessible] = []
+        self._worker: Optional[threading.Thread] = None
+        self._cancel = threading.Event()
+        self._input_paths: List[str] = []
+        self._output_is_auto = True
+        self._last_output_path: Optional[str] = None
+        self._last_html_path: Optional[str] = None
+        self._last_announced_pct = 0
+        self._status_text = ""
+        self.custom_profiles: Dict[str, dict] = {}
+        self.current_profile = "Default"
+        self.theme = "System"
+        self._profile_menu_ids: Dict[int, str] = {}
+        self.pandoc_opts = ps.PandocOptions()
+        self.pandoc_auto = False
+        self.pandoc_out_dir = ""
+        self._last_pandoc_path: Optional[str] = None
 
-        # Profile name (built-in or custom)
-        self.profile_var = tk.StringVar(value="Default")
+        self._build_menu()
+        self._build_ui()
+        self.CreateStatusBar(1)
 
-    # ----------------------------------------------------------- config helpers
-    def _load_config(self) -> None:
-        """Load persisted settings, if any."""
-        if not CONFIG_PATH.exists():
-            return
-        try:
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return
+        self._load_config(config)
+        if initial_files:
+            self._input_paths = []
+            self._output_is_auto = True
+            self.out_text.ChangeValue("")
+            self.add_inputs(initial_files, announce=False)
 
+        self._refresh_profiles()
+        self._update_buttons()
+        self.Bind(wx.EVT_CLOSE, self._on_close)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+        # Bound after the frame's own key handler so it runs first; keys it
+        # doesn't use are passed on.
+        MnemonicHandler(self)
+
+        self._set_status("Ready. Press Ctrl+O to add PDF files, then F5 to convert. Press F1 for keyboard help.",
+                         announce=False)
+        self._log(f"Document Conversion Suite {__version__}. "
+                  f"Screen reader announcements: {self.announcer.describe()}.")
+        pandoc = ps.find_pandoc()
+        self._log(f"Pandoc: {'found at ' + pandoc if pandoc else 'not installed (Ctrl+P to install)'}.")
+        tess = ts.configure()
+        self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} at {tess}" if tess
+                  else "not installed. Scanned PDFs need it; press Ctrl+T to install it") + ".")
+        wx.CallAfter(self.input_list.SetFocus)
+
+    # ------------------------------------------------------------------ helpers
+    def _describe(self, ctrl: wx.Window, text: str) -> None:
+        """Tooltip for mouse users + accessible description for screen readers."""
+        describe(ctrl, text)
+
+    # --------------------------------------------------------------------- menu
+    def _build_menu(self) -> None:
+        mb = wx.MenuBar()
+
+        # File
+        m_file = wx.Menu()
+        self.mi_add = m_file.Append(wx.ID_ANY, "&Add PDF Files...\tCtrl+O",
+                                    "Choose one or more PDF files to convert")
+        self.mi_output = m_file.Append(wx.ID_ANY, "Choose &Output File or Folder...\tCtrl+Shift+O",
+                                       "Choose where the Markdown output is saved")
+        m_file.AppendSeparator()
+        self.mi_convert = m_file.Append(wx.ID_ANY, "&Convert\tF5", "Start converting the input files")
+        self.mi_stop = m_file.Append(wx.ID_ANY, "&Stop Conversion\tShift+F5", "Stop the running conversion")
+        self.mi_pandoc = m_file.Append(wx.ID_ANY, "Convert Any Document with &Pandoc...\tCtrl+P",
+                                       "Convert to Word, EPUB, HTML, LaTeX and every other "
+                                       "format pandoc supports")
+        self.mi_tesseract = m_file.Append(wx.ID_ANY, "&Tesseract OCR (Install, Update, Languages)...\tCtrl+T",
+                                          "Install or update Tesseract OCR and add OCR languages")
+        m_file.AppendSeparator()
+        self.mi_open_folder = m_file.Append(wx.ID_ANY, "Open Output &Folder\tCtrl+Shift+F",
+                                            "Open the folder that contains the output")
+        self.mi_open_md = m_file.Append(wx.ID_ANY, "Open Converted &Markdown File\tCtrl+Shift+M",
+                                        "Open the last converted Markdown file")
+        self.mi_open_html = m_file.Append(wx.ID_ANY, "Open Accessible &HTML File\tCtrl+Shift+H",
+                                          "Open the last accessible HTML file in your browser")
+        m_file.AppendSeparator()
+        m_file.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Close Document Conversion Suite")
+        mb.Append(m_file, "&File")
+
+        # Profiles
+        m_prof = wx.Menu()
+        self.profile_submenu = wx.Menu()
+        m_prof.AppendSubMenu(self.profile_submenu, "&Apply Profile",
+                             "Apply a saved set of conversion options")
+        m_prof.AppendSeparator()
+        self.mi_save_profile = m_prof.Append(wx.ID_ANY, "&Save Current Settings as Profile...\tCtrl+S",
+                                             "Save the current options as a named profile")
+        self.mi_delete_profile = m_prof.Append(wx.ID_ANY, "&Delete Current Profile...",
+                                               "Delete the selected custom profile")
+        self.mi_reset = m_prof.Append(wx.ID_ANY, "&Reset Options to Defaults",
+                                      "Set every option back to its default value")
+        mb.Append(m_prof, "&Profiles")
+
+        # View
+        m_view = wx.Menu()
+        m_theme = wx.Menu()
+        self.mi_theme = {
+            "System": m_theme.AppendRadioItem(wx.ID_ANY, "Follow &Windows Setting",
+                                              "Use the Windows light or dark app mode"),
+            "Light": m_theme.AppendRadioItem(wx.ID_ANY, "&Light", "Always use the light theme"),
+            "Dark": m_theme.AppendRadioItem(wx.ID_ANY, "&Dark", "Always use the dark theme"),
+        }
+        m_view.AppendSubMenu(m_theme, "&Theme", "Choose light, dark or the Windows setting")
+        self.mi_announce = m_view.AppendCheckItem(
+            wx.ID_ANY, "&Announce Status with Screen Reader",
+            "Speak conversion progress and results with your screen reader")
+        self.mi_announce.Check(True)
+        self.mi_speak_status = m_view.Append(wx.ID_ANY, "Speak Current &Status\tCtrl+Shift+S",
+                                             "Have your screen reader speak the current status")
+        mb.Append(m_view, "&View")
+
+        # Help
+        m_help = wx.Menu()
+        self.mi_shortcuts = m_help.Append(wx.ID_HELP, "&Keyboard Shortcuts\tF1",
+                                          "List every keyboard shortcut")
+        self.mi_tess_update = m_help.Append(wx.ID_ANY, "Check for &Tesseract Updates...",
+                                            "Check online for a newer Tesseract OCR and install it")
+        self.mi_about = m_help.Append(wx.ID_ABOUT, "&About Document Conversion Suite", "Version and license information")
+        mb.Append(m_help, "&Help")
+
+        self.SetMenuBar(mb)
+
+        b = self.Bind
+        b(wx.EVT_MENU, lambda e: self._choose_inputs(), self.mi_add)
+        b(wx.EVT_MENU, lambda e: self._choose_output(), self.mi_output)
+        b(wx.EVT_MENU, lambda e: self._on_convert(), self.mi_convert)
+        b(wx.EVT_MENU, lambda e: self._on_cancel(), self.mi_stop)
+        b(wx.EVT_MENU, lambda e: self._open_output_folder(), self.mi_open_folder)
+        b(wx.EVT_MENU, lambda e: self._open_last_file("md"), self.mi_open_md)
+        b(wx.EVT_MENU, lambda e: self._open_last_file("html"), self.mi_open_html)
+        b(wx.EVT_MENU, lambda e: self._open_pandoc(), self.mi_pandoc)
+        b(wx.EVT_MENU, lambda e: self._open_tesseract(), self.mi_tesseract)
+        b(wx.EVT_MENU, lambda e: self._open_tesseract(check_now=True), self.mi_tess_update)
+        b(wx.EVT_MENU, lambda e: self.Close(), id=wx.ID_EXIT)
+        b(wx.EVT_MENU, lambda e: self._save_profile_dialog(), self.mi_save_profile)
+        b(wx.EVT_MENU, lambda e: self._delete_profile(), self.mi_delete_profile)
+        b(wx.EVT_MENU, lambda e: self._reset_options(), self.mi_reset)
+        for name, item in self.mi_theme.items():
+            b(wx.EVT_MENU, lambda e, n=name: self._on_theme(n), item)
+        b(wx.EVT_MENU, self._on_toggle_announce, self.mi_announce)
+        b(wx.EVT_MENU, lambda e: self.announcer.speak(self._status_text, interrupt=True)
+          if self.announcer.enabled else None, self.mi_speak_status)
+        b(wx.EVT_MENU, lambda e: self._show_shortcuts(), id=wx.ID_HELP)
+        b(wx.EVT_MENU, lambda e: self._show_about(), id=wx.ID_ABOUT)
+
+    # ----------------------------------------------------------------------- UI
+    def _build_ui(self) -> None:
+        panel = wx.Panel(self, style=wx.TAB_TRAVERSAL)
+        self.panel = panel
+        main = wx.BoxSizer(wx.VERTICAL)
+        pad = 6
+
+        # ===================== Input and output ==============================
+        files_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Input and output")
+        fbox = files_sb.GetStaticBox()
+
+        lbl = wx.StaticText(fbox, label="&Input PDF files:")
+        self.input_list = wx.ListBox(fbox, style=wx.LB_EXTENDED | wx.LB_NEEDED_SB, size=(-1, 110))
+        self._describe(self.input_list,
+                       "PDF files to convert. Press Delete to remove the selected files. "
+                       "Add files with Ctrl+O or by dragging them here. "
+                       "All processing is local; nothing leaves your computer.")
+        files_sb.Add(lbl, 0, wx.LEFT | wx.TOP, pad)
+        files_sb.Add(self.input_list, 1, wx.EXPAND | wx.ALL, pad)
+
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.add_btn = wx.Button(fbox, label="&Add PDFs...")
+        self._describe(self.add_btn, "Choose one or more PDF files to add to the list. Shortcut: Ctrl+O.")
+        self.remove_btn = wx.Button(fbox, label="&Remove Selected")
+        self._describe(self.remove_btn, "Remove the selected files from the list. Shortcut: Delete in the list.")
+        self.clear_btn = wx.Button(fbox, label="Empt&y List")
+        self._describe(self.clear_btn, "Remove all files from the list.")
+        for btn in (self.add_btn, self.remove_btn, self.clear_btn):
+            row.Add(btn, 0, wx.RIGHT, pad)
+        files_sb.Add(row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, pad)
+
+        out_row = wx.BoxSizer(wx.HORIZONTAL)
+        lbl = wx.StaticText(fbox, label="&Output file or folder:")
+        self.out_text = wx.TextCtrl(fbox)
+        self._describe(self.out_text,
+                       "Where to save the Markdown. For one input this is a .md file; "
+                       "for several inputs it is a folder. Filled in automatically.")
+        self.browse_out_btn = wx.Button(fbox, label="&Browse Output...")
+        self._describe(self.browse_out_btn, "Choose the output file or folder. Shortcut: Ctrl+Shift+O.")
+        out_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
+        out_row.Add(self.out_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
+        out_row.Add(self.browse_out_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        files_sb.Add(out_row, 0, wx.EXPAND | wx.ALL, pad)
+        main.Add(files_sb, 0, wx.EXPAND | wx.ALL, 8)
+
+        # ===================== Conversion options ============================
+        opts_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Conversion options")
+        obox = opts_sb.GetStaticBox()
+        grid = wx.FlexGridSizer(cols=4, vgap=pad, hgap=pad)
+        grid.AddGrowableCol(1, 1)
+        grid.AddGrowableCol(3, 1)
+
+        lbl_profile = wx.StaticText(obox, label="Profil&e:")
+        self.profile_choice = wx.Choice(obox)
+        self._describe(self.profile_choice,
+                       "Apply a saved set of options. Built-in profiles include one for math "
+                       "and science documents. Save your own with Ctrl+S.")
+        grid.Add(lbl_profile, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self.profile_choice, 1, wx.EXPAND)
+        grid.Add((0, 0))
+        grid.Add((0, 0))
+
+        lbl_ocr = wx.StaticText(obox, label="OCR &mode:")
+        self.ocr_choice = wx.Choice(obox, choices=[label for _, label in OCR_MODES])
+        self._describe(self.ocr_choice,
+                       "Off uses the text stored in the PDF and is fastest. Auto detects scanned "
+                       "pages and runs OCR only where needed. Tesseract runs OCR on every page. "
+                       "OCRmyPDF gives the highest-fidelity OCR. OCR needs Tesseract installed.")
+        lbl_lang = wx.StaticText(obox, label="OCR lan&guage:")
+        self.lang_combo = wx.ComboBox(obox, choices=[f"{c} ({n})" for c, n in OCR_LANGS],
+                                      style=wx.CB_DROPDOWN)
+        self._describe(self.lang_combo,
+                       "Tesseract language code used for OCR. Choose from the list or type a code. "
+                       "Combine languages with a plus sign, for example eng+fra. "
+                       "Also sets the language of the accessible HTML copy.")
+        grid.Add(lbl_ocr, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self.ocr_choice, 1, wx.EXPAND)
+        grid.Add(lbl_lang, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
+        grid.Add(self.lang_combo, 1, wx.EXPAND)
+        opts_sb.Add(grid, 0, wx.EXPAND | wx.ALL, pad)
+
+        checks = wx.GridSizer(cols=2, vgap=pad, hgap=24)
+        self.export_images_cb = wx.CheckBox(obox, label="E&xport images")
+        self._describe(self.export_images_cb,
+                       "Save the images in the PDF to a folder next to the output and link them "
+                       "from the Markdown with descriptive alternative text.")
+        self.page_breaks_cb = wx.CheckBox(obox, label="Insert page brea&ks")
+        self._describe(self.page_breaks_cb, "Insert a horizontal rule between pages.")
+        self.preview_cb = wx.CheckBox(obox, label="Preview first &3 pages only")
+        self._describe(self.preview_cb, "Convert only the first three pages, for a quick check.")
+        self.rm_edges_cb = wx.CheckBox(obox, label="Remove repeating header and footer &text")
+        self._describe(self.rm_edges_cb,
+                       "Remove running headers, footers and page numbers that repeat on every page.")
+        self.caps_cb = wx.CheckBox(obox, label="Promote &uppercase lines to headings")
+        self._describe(self.caps_cb, "Treat short lines written in all capitals as headings.")
+        self.defrag_cb = wx.CheckBox(obox, label="&Join short orphan lines into paragraphs")
+        self._describe(self.defrag_cb,
+                       "Merge short isolated lines into the previous paragraph so text reads "
+                       "smoothly.")
+        for cb in (self.export_images_cb, self.page_breaks_cb, self.preview_cb,
+                   self.rm_edges_cb, self.caps_cb, self.defrag_cb):
+            checks.Add(cb, 0)
+        opts_sb.Add(checks, 0, wx.EXPAND | wx.ALL, pad)
+
+        tune = wx.FlexGridSizer(cols=4, vgap=pad, hgap=pad)
+        lbl = wx.StaticText(obox, label="Heading si&ze ratio (percent of body text):")
+        self.heading_spin = wx.SpinCtrl(obox, min=100, max=250, initial=115,
+                                        style=wx.SP_ARROW_KEYS)
+        self.heading_spin.SetIncrement(5)
+        self._describe(self.heading_spin,
+                       "Text at least this many percent of the body text size becomes a heading. "
+                       "Lower values create more headings. Default 115.")
+        tune.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        tune.Add(self.heading_spin, 0)
+        lbl = wx.StaticText(obox, label="Orphan line &width (characters):")
+        self.orphan_spin = wx.SpinCtrl(obox, min=10, max=120, initial=45, style=wx.SP_ARROW_KEYS)
+        self._describe(self.orphan_spin,
+                       "Isolated lines up to this many characters are merged into the previous "
+                       "paragraph. Default 45.")
+        tune.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
+        tune.Add(self.orphan_spin, 0)
+        opts_sb.Add(tune, 0, wx.ALL, pad)
+
+        math_row = wx.FlexGridSizer(cols=2, vgap=pad, hgap=pad)
+        lbl = wx.StaticText(obox, label="When e&quations are found:")
+        self.math_choice = wx.Choice(obox, choices=[label for _, label in MATH_MODES])
+        self._describe(self.math_choice,
+                       "What to do when a converted document contains math. MathJax makes math "
+                       "accessible: screen readers speak it, it can be read in Braille, and you "
+                       "can explore it with the arrow keys. Enabling it adds a MathJax loader to "
+                       "the Markdown file and saves an accessible HTML copy. "
+                       "Ask me is the default, and the question defaults to Yes.")
+        math_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+        math_row.Add(self.math_choice, 0)
+        opts_sb.Add(math_row, 0, wx.ALL, pad)
+        self.html_cb = wx.CheckBox(obox, label="Also save a&n accessible HTML copy of every document")
+        self._describe(self.html_cb,
+                       "Save an HTML version next to each Markdown file, with the document "
+                       "language, real headings and table header cells. Documents with math "
+                       "always get one when MathJax is enabled.")
+        opts_sb.Add(self.html_cb, 0, wx.ALL, pad)
+        main.Add(opts_sb, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        # ===================== Progress ======================================
+        prog_sb = wx.StaticBoxSizer(wx.VERTICAL, panel, "Progress")
+        pbox = prog_sb.GetStaticBox()
+        act = wx.BoxSizer(wx.HORIZONTAL)
+        self.convert_btn = wx.Button(pbox, label="&Convert")
+        self._describe(self.convert_btn, "Start converting the files in the list. Shortcut: F5 or Ctrl+Enter.")
+        self.stop_btn = wx.Button(pbox, label="&Stop")
+        self._describe(self.stop_btn, "Stop the running conversion. Shortcut: Shift+F5 or Escape.")
+        self.open_folder_btn = wx.Button(pbox, label="Open Output Fol&der")
+        self._describe(self.open_folder_btn,
+                       "Open the folder containing the converted files. Shortcut: Ctrl+Shift+F.")
+        for btn in (self.convert_btn, self.stop_btn, self.open_folder_btn):
+            act.Add(btn, 0, wx.RIGHT, pad)
+        prog_sb.Add(act, 0, wx.ALL, pad)
+
+        g_row = wx.BoxSizer(wx.HORIZONTAL)
+        lbl = wx.StaticText(pbox, label="Progress:")
+        self.gauge = wx.Gauge(pbox, range=100, style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
+        g_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, pad)
+        g_row.Add(self.gauge, 1, wx.ALIGN_CENTER_VERTICAL)
+        prog_sb.Add(g_row, 0, wx.EXPAND | wx.ALL, pad)
+
+        lbl = wx.StaticText(pbox, label="Conversion &log:")
+        self.log_text = wx.TextCtrl(pbox, style=wx.TE_MULTILINE | wx.TE_READONLY,
+                                    size=(-1, 140))
+        self._describe(self.log_text,
+                       "Messages from the conversion. Read it with the arrow keys.")
+        prog_sb.Add(lbl, 0, wx.LEFT | wx.TOP, pad)
+        prog_sb.Add(self.log_text, 1, wx.EXPAND | wx.ALL, pad)
+        main.Add(prog_sb, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        panel.SetSizer(main)
+        self.convert_btn.SetDefault()
+
+        # Events
+        self.add_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_inputs())
+        self.remove_btn.Bind(wx.EVT_BUTTON, lambda e: self._remove_selected())
+        self.clear_btn.Bind(wx.EVT_BUTTON, lambda e: self._clear_inputs())
+        self.browse_out_btn.Bind(wx.EVT_BUTTON, lambda e: self._choose_output())
+        self.convert_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_convert())
+        self.stop_btn.Bind(wx.EVT_BUTTON, lambda e: self._on_cancel())
+        self.open_folder_btn.Bind(wx.EVT_BUTTON, lambda e: self._open_output_folder())
+        self.profile_choice.Bind(wx.EVT_CHOICE, self._on_profile_choice)
+        self.input_list.Bind(wx.EVT_KEY_DOWN, self._on_list_key)
+        self.input_list.Bind(wx.EVT_LISTBOX, lambda e: self._update_buttons())
+        self.out_text.Bind(wx.EVT_TEXT, self._on_output_edited)
+
+        drop = PdfDropTarget(self)
+        self.input_list.SetDropTarget(drop)
+        self.panel.SetDropTarget(PdfDropTarget(self))
+
+    # ------------------------------------------------------------------ config
+    def _load_config(self, data: dict) -> None:
         theme = data.get("theme")
-        if theme in ("Dark", "Light"):
-            self.theme_var.set(theme)
+        if theme in THEMES:
+            self.theme = theme
+        self.mi_theme[self.theme].Check(True)
 
-        last_input = data.get("last_input")
-        if isinstance(last_input, str):
-            self.in_path_var.set(last_input)
-
-        last_output = data.get("last_output")
-        if isinstance(last_output, str):
-            self.out_path_var.set(last_output)
-            self._last_output_path = last_output
-
-        opts = data.get("options")
-        if isinstance(opts, dict):
-            self._apply_options_dict(opts)
+        announce = data.get("announce", True)
+        self.announcer.enabled = bool(announce)
+        self.mi_announce.Check(bool(announce))
 
         profiles = data.get("profiles")
         if isinstance(profiles, dict):
-            # Basic validation: only dict values
             self.custom_profiles = {
                 name: opt for name, opt in profiles.items()
-                if isinstance(opt, dict)
+                if isinstance(opt, dict) and name not in BUILTIN_PROFILES
             }
+        prof = data.get("profile")
+        if isinstance(prof, str) and (prof in BUILTIN_PROFILES or prof in self.custom_profiles):
+            self.current_profile = prof
+
+        opts = data.get("options")
+        self._apply_options_dict(opts if isinstance(opts, dict) else DEFAULT_OPTIONS)
+
+        inputs = data.get("last_inputs")
+        if not isinstance(inputs, list):
+            last = data.get("last_input")
+            inputs = [last] if isinstance(last, str) and last.lower().endswith(".pdf") else []
+        inputs = [p for p in inputs if isinstance(p, str) and Path(p).is_file()]
+        last_output = data.get("last_output")
+        if inputs:
+            self.add_inputs(inputs, announce=False)
+        if isinstance(last_output, str) and last_output and inputs:
+            self.out_text.ChangeValue(last_output)
+            self._output_is_auto = bool(data.get("output_is_auto", True))
+            self._last_output_path = last_output
+
+        pandoc = data.get("pandoc")
+        if isinstance(pandoc, dict):
+            self.pandoc_opts = ps.PandocOptions.from_dict(pandoc.get("options", {}))
+            self.pandoc_auto = bool(pandoc.get("auto_export", False))
+            self.pandoc_out_dir = str(pandoc.get("out_dir", "") or "")
+
+        size = data.get("window_size")
+        if isinstance(size, list) and len(size) == 2:
+            try:
+                self.SetSize((max(760, int(size[0])), max(640, int(size[1]))))
+            except Exception:
+                pass
 
     def _save_config(self) -> None:
-        """Persist theme, paths, options, and custom profiles globally."""
         data = {
-            "theme": self.theme_var.get(),
-            "last_input": self.in_path_var.get().strip(),
-            "last_output": self.out_path_var.get().strip(),
+            "theme": self.theme,
+            "announce": self.announcer.enabled,
+            "last_inputs": list(self._input_paths),
+            "last_output": self.out_text.GetValue().strip(),
+            "output_is_auto": self._output_is_auto,
             "options": self._options_from_controls(),
+            "profile": self.current_profile,
             "profiles": self.custom_profiles,
+            "window_size": list(self.GetSize()) if not self.IsMaximized() else None,
+            "pandoc": {
+                "options": self.pandoc_opts.to_dict(),
+                "auto_export": self.pandoc_auto,
+                "out_dir": self.pandoc_out_dir,
+            },
         }
         try:
             CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
-            # Fail silently; persistence is best-effort.
-            pass
+            pass  # persistence is best-effort
 
-    # --------------------------------------------------------------------- UI
-    def _build_ui(self) -> None:
-        # Root container with generous padding
-        root = ttk.Frame(self, padding=(16, 12, 16, 12))
-        root.pack(fill="both", expand=True)
+    # ------------------------------------------------------------------ status
+    def _set_status(self, text: str, announce: bool = True, interrupt: bool = False) -> None:
+        self._status_text = text
+        self.SetStatusText(text)
+        if announce:
+            self.announcer.speak(text, interrupt=interrupt)
 
-        # ===================== HEADER BAR ======================================
-        # Profile left, theme right — full-width bar above everything
-        header = ttk.Frame(root)
-        header.pack(fill="x", pady=(0, 12))
+    def _log(self, msg: str) -> None:
+        """Thread-safe log appender that never moves the reader's caret."""
+        def append() -> None:
+            if not self:
+                return
+            focused = wx.Window.FindFocus() is self.log_text
+            if focused:
+                pos = self.log_text.GetInsertionPoint()
+                self.log_text.AppendText(str(msg) + "\n")
+                self.log_text.SetInsertionPoint(pos)
+            else:
+                self.log_text.AppendText(str(msg) + "\n")
+        wx.CallAfter(append)
 
-        prof_frame = ttk.Frame(header)
-        prof_frame.pack(side="left")
-        ttk.Label(prof_frame, text="Profile:", style="Muted.TLabel").pack(side="left", padx=(0, 6))
-        self.profile_combo = ttk.Combobox(
-            prof_frame, textvariable=self.profile_var,
-            state="readonly", width=22,
-        )
-        self.profile_combo.pack(side="left", padx=(0, 8))
-        ttk.Button(prof_frame, text="Save\u2026", command=self._save_profile_dialog).pack(side="left", padx=(0, 4))
-        ttk.Button(prof_frame, text="Delete", command=self._delete_profile).pack(side="left")
+    def _busy(self) -> bool:
+        return self._worker is not None and self._worker.is_alive()
 
-        theme_frame = ttk.Frame(header)
-        theme_frame.pack(side="right")
-        ttk.Label(theme_frame, text="Theme:", style="Muted.TLabel").pack(side="left", padx=(0, 6))
-        ttk.Combobox(
-            theme_frame, values=("Dark", "Light"),
-            textvariable=self.theme_var, width=7, state="readonly",
-        ).pack(side="left")
+    def _update_buttons(self) -> None:
+        busy = self._busy()
+        has_inputs = bool(self._input_paths)
+        has_sel = bool(self.input_list.GetSelections())
+        has_output = bool(self._last_output_path)
 
-        # ===================== FILES CARD ======================================
-        files_card = ttk.Labelframe(root, text="\u2002Files", style="Card.TLabelframe")
-        files_card.pack(fill="x", pady=(0, 10))
-        files_card.columnconfigure(1, weight=1)
+        targets = {
+            self.convert_btn: not busy and has_inputs,
+            self.stop_btn: busy,
+            self.open_folder_btn: has_output,
+            self.remove_btn: not busy and has_sel,
+            self.clear_btn: not busy and has_inputs,
+            self.add_btn: not busy,
+            self.browse_out_btn: not busy,
+        }
+        # Move focus away from a control that is about to be disabled, so
+        # keyboard and screen reader users never lose their place.
+        focus = wx.Window.FindFocus()
+        if focus in targets and not targets[focus]:
+            for candidate in (self.stop_btn, self.open_folder_btn, self.convert_btn,
+                              self.add_btn, self.input_list):
+                if candidate is self.input_list or targets.get(candidate):
+                    candidate.SetFocus()
+                    break
+        for ctrl, enable in targets.items():
+            ctrl.Enable(enable)
 
-        ttk.Label(files_card, text="Input PDF(s):").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=6)
-        in_entry = ttk.Entry(files_card, textvariable=self.in_path_var)
-        in_entry.grid(row=0, column=1, sticky="ew", pady=6)
-        ttk.Button(files_card, text="Browse\u2026", command=self._choose_input).grid(
-            row=0, column=2, sticky="e", padx=(10, 0), pady=6,
-        )
-        ToolTip(in_entry, "Select one or more PDFs to convert.\nAll processing is 100% local \u2014 nothing leaves your machine.")
+        self.mi_convert.Enable(not busy)
+        self.mi_stop.Enable(busy)
+        self.mi_add.Enable(not busy)
+        self.mi_output.Enable(not busy)
+        self.mi_open_folder.Enable(has_output)
+        self.mi_open_md.Enable(has_output and str(self._last_output_path).lower().endswith(".md"))
+        self.mi_open_html.Enable(bool(self._last_html_path))
 
-        ttk.Label(files_card, text="Output:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=6)
-        out_entry = ttk.Entry(files_card, textvariable=self.out_path_var)
-        out_entry.grid(row=1, column=1, sticky="ew", pady=6)
-        ttk.Button(files_card, text="Browse\u2026", command=self._choose_output).grid(
-            row=1, column=2, sticky="e", padx=(10, 0), pady=6,
-        )
-        ToolTip(out_entry, "Output .md file (single input) or folder (batch).")
-
-        # ===================== OPTIONS CARD ====================================
-        opts_card = ttk.Labelframe(root, text="\u2002Options", style="Card.TLabelframe")
-        opts_card.pack(fill="x", pady=(0, 10))
-
-        # --- OCR settings group ---
-        ocr_group = ttk.Frame(opts_card)
-        ocr_group.pack(fill="x", pady=(0, 8))
-
-        ttk.Label(ocr_group, text="OCR mode:").pack(side="left", padx=(0, 6))
-        ocr_combo = ttk.Combobox(
-            ocr_group, values=OCR_CHOICES,
-            textvariable=self.ocr_var, width=12, state="readonly",
-        )
-        ocr_combo.pack(side="left", padx=(0, 20))
-        ToolTip(ocr_combo,
-            "off       \u2013 native text only (fastest)\n"
-            "auto      \u2013 detect scanned pages, OCR when needed\n"
-            "tesseract \u2013 force Tesseract on every page\n"
-            "ocrmypdf  \u2013 high-fidelity OCR via OCRmyPDF",
-        )
-
-        ttk.Label(ocr_group, text="Language:").pack(side="left", padx=(0, 6))
-        self.ocr_lang_combo = ttk.Combobox(
-            ocr_group, values=OCR_LANG_CHOICES,
-            textvariable=self.ocr_lang_var, width=10,
-        )
-        self.ocr_lang_combo.pack(side="left")
-        ToolTip(self.ocr_lang_combo,
-            "Tesseract language code for OCR.\n"
-            "Select from the list or type a custom code.\n"
-            "Combine with '+', e.g. 'eng+fra'.\n"
-            "Only used when OCR mode is not 'off'.",
-        )
-
-        # --- Visual separator ---
-        ttk.Separator(opts_card, orient="horizontal").pack(fill="x", pady=(4, 8))
-
-        # --- Output toggles ---
-        out_toggles = ttk.Frame(opts_card)
-        out_toggles.pack(fill="x", pady=(0, 6))
-
-        for text, var, pad in [
-            ("Export images",              self.export_images_var, (0, 24)),
-            ("Insert page breaks (\u2014\u2014\u2014)", self.page_breaks_var,   (0, 24)),
-            ("Preview first 3 pages",      self.preview_var,       (0, 0)),
-        ]:
-            ttk.Checkbutton(out_toggles, text=text, variable=var).pack(
-                side="left", padx=pad,
-            )
-
-        # --- Structure toggles ---
-        struct_toggles = ttk.Frame(opts_card)
-        struct_toggles.pack(fill="x", pady=(0, 6))
-
-        for text, var, pad in [
-            ("Remove repeating header / footer", self.rm_edges_var,          (0, 24)),
-            ("Promote CAPS to headings",         self.caps_to_headings_var,  (0, 24)),
-            ("Defragment short orphans",         self.defrag_var,            (0, 0)),
-        ]:
-            ttk.Checkbutton(struct_toggles, text=text, variable=var).pack(
-                side="left", padx=pad,
-            )
-
-        # --- Visual separator ---
-        ttk.Separator(opts_card, orient="horizontal").pack(fill="x", pady=(4, 8))
-
-        # --- Tuning knobs ---
-        tuning = ttk.Frame(opts_card)
-        tuning.pack(fill="x")
-
-        ttk.Label(tuning, text="Heading size ratio:").pack(side="left", padx=(0, 4))
-        heading_spin = ttk.Spinbox(
-            tuning, from_=1.0, to=2.5, increment=0.05,
-            textvariable=self.heading_ratio_var, width=6,
-        )
-        heading_spin.pack(side="left", padx=(0, 28))
-        ToolTip(heading_spin,
-            "Font size \u2265 body \u00d7 this ratio \u2192 promoted to heading.\n"
-            "Lower = more headings.",
-        )
-
-        ttk.Label(tuning, text="Orphan max length:").pack(side="left", padx=(0, 4))
-        orphan_spin = ttk.Spinbox(
-            tuning, from_=10, to=120, increment=1,
-            textvariable=self.orphan_len_var, width=6,
-        )
-        orphan_spin.pack(side="left")
-        ToolTip(orphan_spin,
-            "Short isolated lines up to this many characters\n"
-            "will be merged into the previous paragraph.",
-        )
-
-        # ===================== PROGRESS & LOG CARD =============================
-        log_card = ttk.Labelframe(root, text="\u2002Progress & Log", style="Card.TLabelframe")
-        log_card.pack(fill="both", expand=True)
-
-        # --- Action row: Convert + Stop + Progress bar + Status ---
-        action_row = ttk.Frame(log_card)
-        action_row.pack(fill="x", pady=(0, 8))
-
-        self.go_btn = ttk.Button(
-            action_row, text="\u25b6  Convert",
-            style="Accent.TButton", command=self._on_convert,
-        )
-        self.go_btn.pack(side="left", padx=(0, 8))
-        ToolTip(self.go_btn, "Start conversion  (Ctrl+Enter)")
-
-        self.stop_btn = ttk.Button(
-            action_row, text="Stop", command=self._on_cancel,
-        )
-        self.stop_btn.pack(side="left", padx=(0, 14))
-        self.stop_btn.configure(state="disabled")
-        ToolTip(self.stop_btn, "Cancel  (Esc)")
-
-        self.pbar = ttk.Progressbar(
-            action_row, orient="horizontal", mode="determinate", maximum=100,
-        )
-        self.pbar.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        info_frame = ttk.Frame(action_row)
-        info_frame.pack(side="right")
-
-        self.status_label = ttk.Label(
-            info_frame, text="", style="StatusInfo.TLabel", anchor="e",
-        )
-        self.status_label.pack(side="left", padx=(0, 6))
-
-        self.open_folder_link = ttk.Label(
-            info_frame, text="", style="StatusInfo.TLabel", cursor="hand2",
-        )
-        self.open_folder_link.pack(side="left")
-        self.open_folder_link.bind("<Button-1>", self._on_open_folder)
-
-        # --- Log text area with inset border ---
-        log_outer = tk.Frame(
-            log_card, bd=0, highlightthickness=1,
-            highlightbackground="#333333",
-        )
-        log_outer.pack(fill="both", expand=True, pady=(0, 2))
-
-        self.log_txt = tk.Text(
-            log_outer,
-            wrap="word",
-            height=8,
-            font=self._fonts["log"],
-            relief="flat",
-            borderwidth=0,
-            padx=10,
-            pady=8,
-        )
-        self.log_txt.pack(side="left", fill="both", expand=True)
-
-        log_scroll = ttk.Scrollbar(log_outer, orient="vertical", command=self.log_txt.yview)
-        log_scroll.pack(side="right", fill="y")
-        self.log_txt.configure(yscrollcommand=log_scroll.set, state="disabled")
-
-        self._log_outer = log_outer
-        self._disable_open_folder_link()
-
-    def _wire_events(self) -> None:
-        self.in_path_var.trace_add("write", lambda *_: self._suggest_output())
-
-        def on_theme_change(*_):
-            self._apply_theme()
-            self._save_config()
-
-        self.theme_var.trace_add("write", on_theme_change)
-
-        self.profile_combo.bind("<<ComboboxSelected>>", self._on_profile_selected)
-
-        # Keyboard shortcuts
-        self.bind_all("<Control-o>", lambda e: self._choose_input())
-        self.bind_all("<Control-O>", lambda e: self._choose_input())
-        self.bind_all("<Control-Shift-O>", lambda e: self._choose_output())
-        self.bind_all("<Control-Return>", lambda e: self._on_convert())
-        self.bind_all("<Control-KP_Enter>", lambda e: self._on_convert())
-        self.bind_all("<Escape>", lambda e: self._on_cancel())
-
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-    # ----------------------------------------------------------------- theming
-    def _apply_theme(self) -> None:
-        """Apply Obsidian-inspired dark or clean light theme.
-
-        Safe to call before _build_ui() completes.
-        """
-        if not hasattr(self, "log_txt"):
+    # ------------------------------------------------------------ input files
+    def add_inputs(self, paths, announce: bool = True) -> None:
+        if self._busy():
             return
+        added = 0
+        skipped = 0
+        for p in paths:
+            p = os_display_path(str(p))
+            if not p.lower().endswith(".pdf"):
+                skipped += 1
+                continue
+            if p in self._input_paths:
+                continue
+            self._input_paths.append(p)
+            added += 1
+        self._refresh_input_list()
+        self._suggest_output()
+        self._update_buttons()
+        if announce:
+            msg = f"{added} file{'s' if added != 1 else ''} added. {len(self._input_paths)} in the list."
+            if skipped:
+                msg += f" {skipped} non-PDF file{'s' if skipped != 1 else ''} ignored."
+            self._set_status(msg)
 
-        style = ttk.Style(self)
-        theme = self.theme_var.get()
+    def _refresh_input_list(self, select: Optional[int] = None) -> None:
+        items = [f"{Path(p).name}  ({Path(p).parent})" for p in self._input_paths]
+        self.input_list.Set(items)
+        if items:
+            idx = 0 if select is None else max(0, min(select, len(items) - 1))
+            self.input_list.SetSelection(idx)
 
-        if theme == "Dark":
-            # -- Obsidian dark palette --
-            bg           = "#1e1e1e"
-            card_bg      = "#252525"
-            card_border  = "#363636"
-            text_color   = "#dcddde"
-            text_muted   = "#888888"
-            entry_bg     = "#2d2d2d"
-            entry_border = "#3a3a3a"
-            hover_bg     = "#383838"
-            accent       = "#7b6cd9"
-            accent_hover = "#6a5bb5"
-            status_info  = "#7b6cd9"
-            status_err   = "#e05252"
-            log_bg       = "#191919"
-            log_fg       = "#b0b0b0"
-            sep_color    = "#333333"
-            btn_bg       = "#2d2d2d"
-            btn_fg       = text_color
+    def _choose_inputs(self) -> None:
+        if self._busy():
+            return
+        start_dir = str(Path(self._input_paths[-1]).parent) if self._input_paths else ""
+        with wx.FileDialog(self, "Add PDF files", defaultDir=start_dir,
+                           wildcard="PDF files (*.pdf)|*.pdf|All files (*.*)|*.*",
+                           style=wx.FD_OPEN | wx.FD_MULTIPLE | wx.FD_FILE_MUST_EXIST) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            paths = dlg.GetPaths()
+        self.add_inputs(paths)
+        self.input_list.SetFocus()
 
+    def _remove_selected(self) -> None:
+        sels = sorted(self.input_list.GetSelections(), reverse=True)
+        if not sels or self._busy():
+            return
+        for i in sels:
+            del self._input_paths[i]
+        self._refresh_input_list(select=min(sels))
+        if self._output_is_auto:
+            self.out_text.ChangeValue("")
+        self._suggest_output()
+        self._update_buttons()
+        n = len(sels)
+        self._set_status(f"{n} file{'s' if n != 1 else ''} removed. "
+                         f"{len(self._input_paths)} in the list.", interrupt=True)
+        if not self._input_paths:
+            self.add_btn.SetFocus()
+
+    def _clear_inputs(self) -> None:
+        if self._busy():
+            return
+        self._input_paths = []
+        self._refresh_input_list()
+        if self._output_is_auto:
+            self.out_text.ChangeValue("")
+        self._update_buttons()
+        self.add_btn.SetFocus()
+        self._set_status("Input list emptied.", interrupt=True)
+
+    def _on_list_key(self, event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
+            self._remove_selected()
         else:
-            # -- Clean light palette --
-            bg           = "#f0f0f0"
-            card_bg      = "#ffffff"
-            card_border  = "#d4d4d4"
-            text_color   = "#1a1a1a"
-            text_muted   = "#707070"
-            entry_bg     = "#ffffff"
-            entry_border = "#c0c0c0"
-            hover_bg     = "#e4e4e4"
-            accent       = "#5b5fc7"
-            accent_hover = "#4a4eb5"
-            status_info  = "#5b5fc7"
-            status_err   = "#c62828"
-            log_bg       = "#fafafa"
-            log_fg       = "#333333"
-            sep_color    = "#d4d4d4"
-            btn_bg       = "#e0e0e0"
-            btn_fg       = text_color
+            event.Skip()
 
-        # -- Window --
-        self.configure(bg=bg)
-
-        # -- Frames --
-        style.configure("TFrame", background=bg)
-        style.configure("Log.TFrame", background=card_bg)
-
-        # -- Cards (labelframes) --
-        style.configure(
-            "Card.TLabelframe",
-            background=card_bg, foreground=text_color,
-            bordercolor=card_border, lightcolor=card_border, darkcolor=card_border,
-        )
-        style.configure("Card.TLabelframe.Label", background=card_bg, foreground=text_color)
-
-        # -- Labels --
-        style.configure("TLabel", background=bg, foreground=text_color)
-        style.configure("Muted.TLabel", background=bg, foreground=text_muted)
-        style.configure("Section.TLabel", background=bg, foreground=text_color)
-        style.configure("Status.TLabel", background=bg, foreground=text_color)
-        style.configure("StatusInfo.TLabel", background=bg, foreground=status_info)
-        style.configure("StatusError.TLabel", background=bg, foreground=status_err)
-
-        # -- Inputs --
-        for widget_style in ("TEntry", "TCombobox", "TSpinbox"):
-            style.configure(widget_style, fieldbackground=entry_bg, foreground=text_color, background=entry_bg)
-
-        style.map("TCombobox",
-            fieldbackground=[("readonly", entry_bg), ("!readonly", entry_bg)],
-            foreground=[("readonly", text_color), ("!readonly", text_color)],
-            background=[("readonly", entry_bg), ("!readonly", entry_bg)],
-            selectbackground=[("readonly", accent), ("!readonly", accent)],
-            selectforeground=[("readonly", "#ffffff"), ("!readonly", "#ffffff")],
-        )
-        style.map("TSpinbox",
-            fieldbackground=[("readonly", entry_bg), ("!readonly", entry_bg)],
-            foreground=[("readonly", text_color), ("!readonly", text_color)],
-            background=[("readonly", entry_bg), ("!readonly", entry_bg)],
-        )
-
-        # -- Buttons --
-        style.configure("TButton", background=btn_bg, foreground=btn_fg)
-        style.map("TButton",
-            background=[("active", hover_bg), ("disabled", bg), ("!active", btn_bg)],
-            foreground=[("disabled", text_muted)],
-        )
-
-        # -- Accent button --
-        style.configure("Accent.TButton", background=accent, foreground="#ffffff")
-        style.map("Accent.TButton",
-            background=[("active", accent_hover), ("disabled", btn_bg), ("!active", accent)],
-            foreground=[("disabled", text_muted), ("!disabled", "#ffffff")],
-        )
-
-        # -- Checkbuttons --
-        # Inside cards, checkbuttons sit on card_bg; outside, on bg.
-        # Clam theme uses background for the label area.
-        style.configure("TCheckbutton", background=card_bg, foreground=text_color)
-        style.map("TCheckbutton",
-            background=[("active", hover_bg), ("!active", card_bg)],
-            foreground=[("active", text_color), ("!active", text_color)],
-        )
-
-        # -- Separators --
-        style.configure("TSeparator", background=sep_color)
-
-        # -- Progress bar --
-        trough = entry_bg if theme == "Dark" else "#e0e0e0"
-        style.configure("Horizontal.TProgressbar", troughcolor=trough, background=accent)
-
-        # -- Log area --
-        self.log_txt.configure(bg=log_bg, fg=log_fg, insertbackground=log_fg)
-        if hasattr(self, "_log_outer"):
-            border_col = card_border if theme == "Dark" else "#d0d0d0"
-            self._log_outer.configure(highlightbackground=border_col)
-
-    # ----------------------------------------------------------------- helpers
-    def _set_status(self, text: str, kind: str = "info") -> None:
-        if not hasattr(self, "status_label"):
-            return
-        style = "StatusInfo.TLabel" if kind == "info" else "StatusError.TLabel"
-        self.status_label.configure(text=text, style=style)
-
-    def _clear_log(self) -> None:
-        self.log_txt.configure(state="normal")
-        self.log_txt.delete("1.0", "end")
-        self.log_txt.configure(state="disabled")
-
-    def _disable_open_folder_link(self) -> None:
-        self.open_folder_link.configure(text="")
-
-    def _enable_open_folder_link(self) -> None:
-        self.open_folder_link.configure(text="Open folder")
-
-    # ------------------------------------------------------------- path select
-    def _choose_input(self) -> None:
-        paths = filedialog.askopenfilenames(
-            title="Select PDF(s)",
-            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
-        )
-        if not paths:
-            return
-        # paths is a tuple of strings
-        self._input_paths = [os_display_path(p) for p in paths]
-        if len(self._input_paths) == 1:
-            self.in_path_var.set(self._input_paths[0])
-        else:
-            self.in_path_var.set(f"{len(self._input_paths)} files selected")
-
-    def _choose_output(self) -> None:
-        if len(self._input_paths) > 1:
-            # Multiple inputs: choose an output directory
-            directory = filedialog.askdirectory(title="Choose output folder")
-            if directory:
-                self.out_path_var.set(os_display_path(directory))
-            return
-
-        base = self.out_path_var.get().strip() or self.in_path_var.get().strip() or "output.md"
-        initial = Path(base).name if base else "output.md"
-
-        path = filedialog.asksaveasfilename(
-            title="Save Markdown as…",
-            defaultextension=".md",
-            initialfile=initial,
-            filetypes=[("Markdown files", "*.md"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        self.out_path_var.set(os_display_path(path))
+    # ------------------------------------------------------------------ output
+    def _on_output_edited(self, event) -> None:
+        self._output_is_auto = False
+        event.Skip()
 
     def _suggest_output(self) -> None:
-        raw = self.in_path_var.get().strip()
-        if not raw:
+        if not self._input_paths:
             return
-        # Don't auto-suggest when multiple files are selected
-        if len(self._input_paths) > 1:
-            if not self.out_path_var.get().strip():
-                # Default to the directory of the first input
-                try:
-                    first_dir = str(Path(self._input_paths[0]).parent)
-                    self.out_path_var.set(os_display_path(first_dir))
-                except Exception:
-                    pass
+        if self.out_text.GetValue().strip() and not self._output_is_auto:
             return
-        try:
-            p = Path(raw)
-            out = p.with_suffix(".md")
-            if not self.out_path_var.get().strip():
-                self.out_path_var.set(os_display_path(out))
-        except Exception:
-            # ignore bad paths
-            pass
-
-    # ----------------------------------------------------------- profile logic
-    def _populate_profiles(self) -> None:
-        names = list(BUILTIN_PROFILES.keys()) + sorted(self.custom_profiles.keys())
-        if not names:
-            names = ["Default"]
-        self.profile_combo["values"] = names
-        if self.profile_var.get() not in names:
-            self.profile_var.set("Default")
-
-    def _on_profile_selected(self, _event=None) -> None:
-        name = self.profile_var.get()
-        if name in BUILTIN_PROFILES:
-            opts = BUILTIN_PROFILES[name]
-        elif name in self.custom_profiles:
-            opts = self.custom_profiles[name]
+        if len(self._input_paths) == 1:
+            value = os_display_path(Path(self._input_paths[0]).with_suffix(".md"))
         else:
+            value = os_display_path(Path(self._input_paths[0]).parent)
+        self.out_text.ChangeValue(value)
+        self._output_is_auto = True
+
+    def _choose_output(self) -> None:
+        if self._busy():
+            return
+        current = self.out_text.GetValue().strip()
+        if len(self._input_paths) > 1:
+            with wx.DirDialog(self, "Choose output folder", defaultPath=current,
+                              style=wx.DD_DEFAULT_STYLE) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                path = dlg.GetPath()
+        else:
+            base = Path(current) if current else (
+                Path(self._input_paths[0]).with_suffix(".md") if self._input_paths else Path("output.md"))
+            with wx.FileDialog(self, "Save Markdown as", defaultDir=str(base.parent),
+                               defaultFile=base.name,
+                               wildcard="Markdown files (*.md)|*.md|All files (*.*)|*.*",
+                               style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                path = dlg.GetPath()
+        self.out_text.ChangeValue(os_display_path(path))
+        self._output_is_auto = False
+        self._set_status(f"Output set to {path}")
+        self.out_text.SetFocus()
+
+    # ---------------------------------------------------------------- profiles
+    def _profile_names(self) -> List[str]:
+        return list(BUILTIN_PROFILES.keys()) + sorted(self.custom_profiles.keys())
+
+    def _refresh_profiles(self) -> None:
+        names = self._profile_names()
+        if self.current_profile not in names:
+            self.current_profile = "Default"
+        self.profile_choice.Set(names)
+        self.profile_choice.SetStringSelection(self.current_profile)
+
+        # Rebuild the Profiles > Apply Profile submenu.
+        for item_id in list(self._profile_menu_ids):
+            self.Unbind(wx.EVT_MENU, id=item_id)
+        for item in list(self.profile_submenu.GetMenuItems()):
+            self.profile_submenu.Delete(item)
+        self._profile_menu_ids = {}
+        for i, name in enumerate(names):
+            safe = name.replace("&", "&&")
+            label = f"&{i + 1} {safe}" if i < 9 else safe
+            item = self.profile_submenu.AppendRadioItem(wx.ID_ANY, label)
+            self._profile_menu_ids[item.GetId()] = name
+            self.Bind(wx.EVT_MENU, self._on_profile_menu, id=item.GetId())
+            if name == self.current_profile:
+                item.Check(True)
+        is_custom = self.current_profile in self.custom_profiles
+        self.mi_delete_profile.Enable(is_custom)
+
+    def _on_profile_menu(self, event) -> None:
+        name = self._profile_menu_ids.get(event.GetId())
+        if name:
+            self._apply_profile(name)
+
+    def _on_profile_choice(self, event) -> None:
+        name = self.profile_choice.GetStringSelection()
+        if name:
+            self._apply_profile(name, announce=False)
+
+    def _apply_profile(self, name: str, announce: bool = True) -> None:
+        opts = BUILTIN_PROFILES.get(name) or self.custom_profiles.get(name)
+        if opts is None:
             return
         self._apply_options_dict(opts)
+        self.current_profile = name
+        self._refresh_profiles()
         self._log(f"[profile] Applied profile: {name}")
+        self._set_status(f"Profile {name} applied.", announce=announce)
 
     def _save_profile_dialog(self) -> None:
-        name = simpledialog.askstring("Save profile", "Profile name:", parent=self)
-        if not name:
-            return
-        name = name.strip()
+        with wx.TextEntryDialog(self, "Name for the new profile:", "Save Profile",
+                                value="" if self.current_profile in BUILTIN_PROFILES
+                                else self.current_profile) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            name = dlg.GetValue().strip()
         if not name:
             return
         if name in BUILTIN_PROFILES:
-            messagebox.showinfo(
-                "Cannot overwrite built-in profile",
-                f'"{name}" is a built-in profile name.\n\n'
-                "Please choose a different name.",
-                parent=self,
-            )
+            wx.MessageBox(f'"{name}" is a built-in profile name. Please choose a different name.',
+                          "Cannot Replace Built-in Profile", wx.OK | wx.ICON_INFORMATION, self)
             return
         if name in self.custom_profiles:
-            if not messagebox.askyesno(
-                "Overwrite profile?",
-                f'A profile named "{name}" already exists.\n\nOverwrite it?',
-                parent=self,
-            ):
+            if wx.MessageBox(f'A profile named "{name}" already exists. Replace it?',
+                             "Replace Profile?", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+                             self) != wx.YES:
                 return
-
         self.custom_profiles[name] = self._options_from_controls()
-        self.profile_var.set(name)
-        self._populate_profiles()
+        self.current_profile = name
+        self._refresh_profiles()
         self._save_config()
         self._log(f"[profile] Saved profile: {name}")
+        self._set_status(f"Profile {name} saved.")
 
     def _delete_profile(self) -> None:
-        name = self.profile_var.get()
-        if name in BUILTIN_PROFILES:
-            messagebox.showinfo(
-                "Built-in profile",
-                "Built-in profiles cannot be deleted.",
-                parent=self,
-            )
-            return
+        name = self.current_profile
         if name not in self.custom_profiles:
-            messagebox.showinfo(
-                "No custom profile selected",
-                "Select a custom profile to delete.",
-                parent=self,
-            )
+            wx.MessageBox("Built-in profiles cannot be deleted. Select a custom profile first.",
+                          "Delete Profile", wx.OK | wx.ICON_INFORMATION, self)
             return
-        if not messagebox.askyesno(
-            "Delete profile?",
-            f'Delete custom profile "{name}"?',
-            parent=self,
-        ):
+        if wx.MessageBox(f'Delete the profile "{name}"?', "Delete Profile?",
+                         wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
             return
         del self.custom_profiles[name]
-        self.profile_var.set("Default")
-        self._apply_options_dict(BUILTIN_PROFILES["Default"])
-        self._populate_profiles()
+        self.current_profile = "Default"
+        self._apply_options_dict(DEFAULT_OPTIONS)
+        self._refresh_profiles()
         self._save_config()
         self._log(f"[profile] Deleted profile: {name}")
+        self._set_status(f"Profile {name} deleted. Default options restored.")
 
-    # ----------------------------------------------------------- convert logic
+    def _reset_options(self) -> None:
+        self._apply_profile("Default", announce=False)
+        self._set_status("Options reset to defaults.")
 
-    def _resolve_input_paths(self) -> list[Path]:
-        """Build the list of input PDF paths to convert.
-        
-        If the user picked multiple files via Browse, those are stored in
-        self._input_paths. If only the text entry was edited directly (or a
-        single file was picked), we fall back to the entry text.
-        """
-        if len(self._input_paths) > 1:
-            return [Path(p) for p in self._input_paths]
-        raw = self.in_path_var.get().strip()
-        if raw:
-            return [Path(raw)]
-        return []
+    # ------------------------------------------------------------ options I/O
+    def _lang_code(self) -> str:
+        raw = self.lang_combo.GetValue().strip()
+        code = raw.split(" (")[0].strip() if raw else ""
+        return code or "eng"
 
-    @staticmethod
-    def _safe_output_path(in_path: Path, out_dir: Path) -> Path:
-        """Derive a .md output path that won't silently overwrite an existing file.
-        
-        If <stem>.md already exists in out_dir, appends _1, _2, … until a
-        free name is found.
-        """
-        candidate = out_dir / (in_path.stem + ".md")
-        if not candidate.exists():
-            return candidate
-        n = 1
-        while True:
-            candidate = out_dir / f"{in_path.stem}_{n}.md"
-            if not candidate.exists():
-                return candidate
-            n += 1
-
-    def _on_convert(self) -> None:
-        # Prevent multiple concurrent runs
-        if self._worker is not None and self._worker.is_alive():
-            messagebox.showinfo(
-                "Conversion in progress",
-                "A conversion is already running.\n\n"
-                "Please wait for it to finish or press Stop.",
-                parent=self,
-            )
-            return
-
-        inputs = self._resolve_input_paths()
-        if not inputs:
-            messagebox.showwarning("Missing input PDF", "Please choose an input PDF.", parent=self)
-            return
-
-        # Validate every input
-        for in_path in inputs:
-            if not in_path.exists():
-                messagebox.showerror(
-                    "Input not found",
-                    f"Input file does not exist:\n{os_display_path(str(in_path))}",
-                    parent=self,
-                )
-                return
-            if in_path.suffix.lower() != ".pdf":
-                messagebox.showerror(
-                    "Input is not a PDF",
-                    f"Not a PDF file:\n{os_display_path(str(in_path))}",
-                    parent=self,
-                )
-                return
-
-        outp = self.out_path_var.get().strip()
-        multiple = len(inputs) > 1
-
-        # Build the list of (input_path, output_path) pairs
-        jobs: list[tuple[Path, Path]] = []
-
-        if multiple:
-            # Output must be (or become) a directory
-            if outp:
-                out_dir = Path(outp)
-            else:
-                # Default to directory of first input
-                out_dir = inputs[0].parent
-                self.out_path_var.set(os_display_path(str(out_dir)))
-            out_dir.mkdir(parents=True, exist_ok=True)
-            for inp in inputs:
-                jobs.append((inp, self._safe_output_path(inp, out_dir)))
-        else:
-            in_path = inputs[0]
-            if not outp:
-                outp = os_display_path(in_path.with_suffix(".md"))
-                self.out_path_var.set(outp)
-            jobs.append((in_path, Path(outp)))
-
-        self._last_output_path = str(jobs[-1][1])
-
-        # --- Password pre-check (only for single file) ---
-        pdf_password = None
-        if not multiple and fitz is not None:
-            try:
-                doc = fitz.open(str(inputs[0]))
-                needs_pass = bool(getattr(doc, "needs_pass", False))
-                if not needs_pass:
-                    doc.close()
-                else:
-                    doc.close()
-                    # Loop until user cancels or provides a correct password
-                    while True:
-                        pwd = simpledialog.askstring(
-                            "Password required",
-                            "This PDF is password protected.\n\n"
-                            "Enter password to convert.\n\n"
-                            "The password is used only in memory and is\n"
-                            "never stored or sent anywhere.",
-                            show="*",
-                            parent=self,
-                        )
-                        if pwd is None:
-                            self._set_status("Conversion cancelled (password required).", kind="info")
-                            self._log("Conversion cancelled before password entry.")
-                            return
-                        pwd = pwd.strip()
-                        if not pwd:
-                            self._set_status("Conversion cancelled (empty password).", kind="info")
-                            self._log("Conversion cancelled: empty password.")
-                            return
-                        try:
-                            doc2 = fitz.open(str(inputs[0]))
-                            ok = bool(doc2.authenticate(pwd))
-                            doc2.close()
-                        except Exception:
-                            ok = False
-                        if ok:
-                            pdf_password = pwd
-                            break
-                        else:
-                            messagebox.showerror(
-                                "Incorrect password",
-                                "The password you entered is incorrect.\n\nPlease try again.",
-                                parent=self,
-                            )
-            except Exception:
-                pdf_password = None
-
-        # Now proceed with conversion
-        self._cancel_requested = False
-        self._lock_ui(busy=True)
-        self._disable_open_folder_link()
-        self._clear_log()
-        self.pbar.configure(value=0)
-
-        if multiple:
-            self._set_status(f"Converting {len(jobs)} files…", kind="info")
-        else:
-            self._set_status("Converting…", kind="info")
-
-        opts = Options(
-            ocr_mode=self.ocr_var.get(),
-            ocr_lang=self.ocr_lang_var.get().strip() or "eng",
-            preview_only=self.preview_var.get(),
-            caps_to_headings=self.caps_to_headings_var.get(),
-            defragment_short=self.defrag_var.get(),
-            heading_size_ratio=float(self.heading_ratio_var.get()),
-            orphan_max_len=int(self.orphan_len_var.get()),
-            remove_headers_footers=self.rm_edges_var.get(),
-            insert_page_breaks=self.page_breaks_var.get(),
-            export_images=self.export_images_var.get(),
-        )
-
-        # Run pipeline on a background thread; pass password as ephemeral arg
-        self._worker = threading.Thread(
-            target=self._run_pipeline,
-            args=(jobs, opts, pdf_password),
-            daemon=True,
-        )
-        self._worker.start()
-
-    def _run_pipeline(
-        self,
-        jobs: list[tuple[Path, Path]],
-        opts: Options,
-        pdf_password: str | None,
-    ) -> None:
-        total_jobs = len(jobs)
-        successes = 0
-        failures = 0
-
-        try:
-            for job_idx, (inp, outp) in enumerate(jobs):
-                if self._cancel_requested:
-                    self._log("Cancelled by user.")
-                    self.after(0, lambda: self._set_status("Cancelled.", kind="info"))
-                    self.after(0, self._disable_open_folder_link)
-                    return
-
-                if total_jobs > 1:
-                    self._log(f"\n{'='*60}")
-                    self._log(f"[{job_idx + 1}/{total_jobs}] {inp.name}")
-                    self._log(f"{'='*60}")
-
-                self._log(f"Input:  {os_display_path(str(inp))}")
-                self._log(f"Output: {os_display_path(str(outp))}")
-                self._log(f"OCR mode: {opts.ocr_mode}")
-
-                def make_progress_cb(idx: int) -> callable:
-                    def wrapped_progress(done: int, total: int) -> None:
-                        if self._cancel_requested:
-                            raise UserCancelled("Cancelled by user")
-                        if total_jobs > 1 and total > 0:
-                            # Scale progress across all jobs
-                            base = int(idx * 100 / total_jobs)
-                            span = 100 / total_jobs
-                            pct = base + int(done * span / total)
-                            self._progress_cb(pct, 100)
-                        else:
-                            self._progress_cb(done, total)
-                    return wrapped_progress
-
-                def wrapped_log(msg: str) -> None:
-                    if self._cancel_requested:
-                        raise UserCancelled("Cancelled by user")
-                    self._log(msg)
-
-                try:
-                    pdf_to_markdown(
-                        str(inp),
-                        str(outp),
-                        opts,
-                        progress_cb=make_progress_cb(job_idx),
-                        log_cb=wrapped_log,
-                        pdf_password=pdf_password,
-                    )
-                    successes += 1
-                except UserCancelled:
-                    self._log("Cancelled by user.")
-                    self.after(0, lambda: self._set_status("Cancelled.", kind="info"))
-                    self.after(0, self._disable_open_folder_link)
-                    return
-                except Exception as e:
-                    failures += 1
-                    self._log(f"Error converting {inp.name}: {e}")
-                    if total_jobs == 1:
-                        self.after(
-                            0,
-                            lambda: self._set_status("Conversion failed. See log for details.", kind="error"),
-                        )
-                        self.after(
-                            0,
-                            lambda err=e: messagebox.showerror(
-                                "Conversion failed", f"An error occurred:\n{err}", parent=self
-                            ),
-                        )
-                        self.after(0, self._disable_open_folder_link)
-                        return
-
-            # All jobs done
-            if total_jobs == 1:
-                self._log("Done.")
-                self.after(0, lambda: self._set_status("Conversion complete.", kind="info"))
-                self.after(0, self._enable_open_folder_link)
-            else:
-                summary = f"Batch complete: {successes} succeeded"
-                if failures:
-                    summary += f", {failures} failed"
-                self._log(f"\n{summary}.")
-                kind = "info" if failures == 0 else "error"
-                self.after(0, lambda: self._set_status(f"{summary}.", kind=kind))
-                self.after(0, self._enable_open_folder_link)
-
-        finally:
-            self._cancel_requested = False
-            pdf_password = None  # type: ignore[assignment]
-            self.after(0, lambda: self._lock_ui(busy=False))
-
-    # -------------------------------------------------------------- callbacks
-    def _log(self, msg: str) -> None:
-        """Thread-safe log appender."""
-        def append() -> None:
-            self.log_txt.configure(state="normal")
-            self.log_txt.insert("end", str(msg) + "\n")
-            self.log_txt.see("end")
-            self.log_txt.configure(state="disabled")
-
-        self.after(0, append)
-
-    def _progress_cb(self, done: int, total: int) -> None:
-        try:
-            pct = int((done / total) * 100) if total > 0 else 0
-        except Exception:
-            pct = max(0, min(100, done))
-        self.after(0, lambda: self.pbar.configure(value=pct))
-
-    def _lock_ui(self, busy: bool) -> None:
-        if busy:
-            self.go_btn.configure(state="disabled")
-            self.stop_btn.configure(state="normal")
-        else:
-            self.go_btn.configure(state="normal")
-            self.stop_btn.configure(state="disabled")
-
-    # -------------------------------------------------------------- cancel/quit
-    def _on_cancel(self) -> None:
-        if self._worker is None or not self._worker.is_alive():
-            return
-        self._cancel_requested = True
-        self._set_status("Cancelling…", kind="info")
-        self._log("Cancellation requested; finishing current step…")
-
-    def _on_open_folder(self, _event=None) -> None:
-        path = self._last_output_path or self.out_path_var.get().strip()
-        if not path:
-            return
-        folder = Path(path)
-        if folder.is_file():
-            folder = folder.parent
-        if not folder.exists():
-            messagebox.showerror(
-                "Folder not found",
-                f"Output folder does not exist:\n{os_display_path(str(folder))}",
-                parent=self,
-            )
-            return
-
-        try:
-            if platform.system() == "Windows":
-                os.startfile(str(folder))  # type: ignore[attr-defined]
-            elif platform.system() == "Darwin":
-                subprocess.Popen(["open", str(folder)])
-            else:
-                subprocess.Popen(["xdg-open", str(folder)])
-        except Exception as e:
-            messagebox.showerror(
-                "Could not open folder",
-                f"Failed to open folder:\n{e}",
-                parent=self,
-            )
-
-    def _on_close(self) -> None:
-        if self._worker is not None and self._worker.is_alive():
-            if not messagebox.askyesno(
-                "Quit while running?",
-                "A conversion is still in progress.\n"
-                "Stop it and quit?",
-                parent=self,
-            ):
-                return
-            self._cancel_requested = True
-        self._save_config()
-        self.destroy()
-
-    # ---------------------------------------------------------- options helpers
     def _options_from_controls(self) -> dict:
         return {
-            "ocr_mode": self.ocr_var.get(),
-            "ocr_lang": self.ocr_lang_var.get().strip() or "eng",
-            "preview": bool(self.preview_var.get()),
-            "export_images": bool(self.export_images_var.get()),
-            "page_breaks": bool(self.page_breaks_var.get()),
-            "rm_edges": bool(self.rm_edges_var.get()),
-            "caps_to_headings": bool(self.caps_to_headings_var.get()),
-            "defrag": bool(self.defrag_var.get()),
-            "heading_ratio": float(self.heading_ratio_var.get()),
-            "orphan_len": int(self.orphan_len_var.get()),
+            "ocr_mode": OCR_CODES[max(0, self.ocr_choice.GetSelection())],
+            "ocr_lang": self._lang_code(),
+            "preview": self.preview_cb.GetValue(),
+            "export_images": self.export_images_cb.GetValue(),
+            "page_breaks": self.page_breaks_cb.GetValue(),
+            "rm_edges": self.rm_edges_cb.GetValue(),
+            "caps_to_headings": self.caps_cb.GetValue(),
+            "defrag": self.defrag_cb.GetValue(),
+            "heading_ratio": round(self.heading_spin.GetValue() / 100.0, 2),
+            "orphan_len": int(self.orphan_spin.GetValue()),
+            "math_mode": MATH_CODES[max(0, self.math_choice.GetSelection())],
+            "html_copy": self.html_cb.GetValue(),
         }
 
     def _apply_options_dict(self, opts: dict) -> None:
-        o = {**DEFAULT_OPTIONS, **opts}
-        if o["ocr_mode"] not in OCR_CHOICES:
-            o["ocr_mode"] = OCR_CHOICES[0]
-        self.ocr_var.set(o["ocr_mode"])
-        self.ocr_lang_var.set(str(o.get("ocr_lang", "eng")) or "eng")
-        self.preview_var.set(bool(o["preview"]))
-        self.export_images_var.set(bool(o["export_images"]))
-        self.page_breaks_var.set(bool(o["page_breaks"]))
-        self.rm_edges_var.set(bool(o["rm_edges"]))
-        self.caps_to_headings_var.set(bool(o["caps_to_headings"]))
-        self.defrag_var.set(bool(o["defrag"]))
+        # Options a profile doesn't mention keep their current value for the
+        # OCR language; everything else falls back to the defaults.
+        current_lang = self._lang_code() if self.lang_combo.GetValue() else "eng"
+        o = {**DEFAULT_OPTIONS, "ocr_lang": current_lang, **opts}
+
+        mode = o.get("ocr_mode")
+        self.ocr_choice.SetSelection(OCR_CODES.index(mode) if mode in OCR_CODES else 0)
+
+        lang = str(o.get("ocr_lang") or "eng")
+        names = dict(OCR_LANGS)
+        self.lang_combo.SetValue(f"{lang} ({names[lang]})" if lang in names else lang)
+
+        self.preview_cb.SetValue(bool(o["preview"]))
+        self.export_images_cb.SetValue(bool(o["export_images"]))
+        self.page_breaks_cb.SetValue(bool(o["page_breaks"]))
+        self.rm_edges_cb.SetValue(bool(o["rm_edges"]))
+        self.caps_cb.SetValue(bool(o["caps_to_headings"]))
+        self.defrag_cb.SetValue(bool(o["defrag"]))
         try:
-            self.heading_ratio_var.set(float(o["heading_ratio"]))
+            self.heading_spin.SetValue(int(round(float(o["heading_ratio"]) * 100)))
         except Exception:
-            self.heading_ratio_var.set(DEFAULT_OPTIONS["heading_ratio"])
+            self.heading_spin.SetValue(115)
         try:
-            self.orphan_len_var.set(int(o["orphan_len"]))
+            self.orphan_spin.SetValue(int(o["orphan_len"]))
         except Exception:
-            self.orphan_len_var.set(DEFAULT_OPTIONS["orphan_len"])
+            self.orphan_spin.SetValue(45)
+        math_mode = o.get("math_mode")
+        self.math_choice.SetSelection(MATH_CODES.index(math_mode) if math_mode in MATH_CODES else 0)
+        self.html_cb.SetValue(bool(o.get("html_copy", False)))
+
+    # ---------------------------------------------------------------- convert
+    @staticmethod
+    def _safe_output_path(in_path: Path, out_dir: Path) -> Path:
+        """Return <stem>.md in out_dir, adding _1, _2 ... instead of overwriting."""
+        candidate = out_dir / (in_path.stem + ".md")
+        n = 1
+        while candidate.exists():
+            candidate = out_dir / f"{in_path.stem}_{n}.md"
+            n += 1
+        return candidate
+
+    def _error(self, title: str, message: str) -> None:
+        self._set_status(f"{title}.", announce=False)
+        wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, self)
+
+    def _ask_password(self, path: Path) -> Optional[str]:
+        """Prompt until the password is right; None if the user cancels."""
+        while True:
+            with wx.PasswordEntryDialog(
+                self,
+                f"{path.name} is password protected. Enter its password to convert it.\n\n"
+                "The password is used only in memory and is never stored or sent anywhere.",
+                "Password Required",
+            ) as dlg:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return None
+                pwd = dlg.GetValue()
+            if not pwd:
+                return None
+            try:
+                doc = fitz.open(str(path))
+                ok = bool(doc.authenticate(pwd))
+                doc.close()
+            except Exception:
+                ok = False
+            if ok:
+                return pwd
+            wx.MessageBox("The password is incorrect. Please try again.", "Incorrect Password",
+                          wx.OK | wx.ICON_ERROR, self)
+
+    def _on_convert(self) -> None:
+        if self._busy():
+            self._set_status("A conversion is already running. Press Escape to stop it.", interrupt=True)
+            return
+
+        inputs = [Path(p) for p in self._input_paths]
+        if not inputs:
+            wx.MessageBox("Add one or more PDF files first. Press Ctrl+O to choose files.",
+                          "No Input Files", wx.OK | wx.ICON_WARNING, self)
+            self.add_btn.SetFocus()
+            return
+
+        for in_path in inputs:
+            if not in_path.is_file():
+                self._error("Input Not Found", f"This file no longer exists:\n{in_path}")
+                return
+            if in_path.suffix.lower() != ".pdf":
+                self._error("Input Is Not a PDF", f"This file is not a PDF:\n{in_path}")
+                return
+
+        outp = self.out_text.GetValue().strip()
+        jobs: List[Tuple[Path, Path]] = []
+        try:
+            if len(inputs) > 1:
+                out_dir = Path(outp) if outp else inputs[0].parent
+                if out_dir.exists() and not out_dir.is_dir():
+                    self._error("Output Must Be a Folder",
+                                "When converting several files, the output must be a folder.")
+                    self.out_text.SetFocus()
+                    return
+                out_dir.mkdir(parents=True, exist_ok=True)
+                self.out_text.ChangeValue(os_display_path(out_dir))
+                for inp in inputs:
+                    jobs.append((inp, self._safe_output_path(inp, out_dir)))
+            else:
+                in_path = inputs[0]
+                out_path = Path(outp) if outp else in_path.with_suffix(".md")
+                if out_path.is_dir() or outp.endswith(("\\", "/")):
+                    out_path = out_path / (in_path.stem + ".md")
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                if out_path.exists():
+                    if wx.MessageBox(f"{out_path.name} already exists. Replace it?",
+                                     "Replace Output File?",
+                                     wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+                        self._set_status("Conversion not started.", interrupt=True)
+                        return
+                self.out_text.ChangeValue(os_display_path(out_path))
+                jobs.append((in_path, out_path))
+        except OSError as e:
+            self._error("Cannot Use Output Location", f"The output location cannot be used:\n{e}")
+            return
+
+        # Scanned PDFs need Tesseract: offer to install it instead of
+        # silently producing an empty document.
+        if not self._check_ocr_ready([inp for inp, _ in jobs]):
+            return
+
+        # Ask for passwords up front, on the GUI thread.
+        passwords: Dict[str, Optional[str]] = {}
+        if fitz is not None:
+            for inp, _ in jobs:
+                try:
+                    doc = fitz.open(str(inp))
+                    needs = bool(getattr(doc, "needs_pass", False))
+                    doc.close()
+                except Exception:
+                    needs = False
+                if needs:
+                    pwd = self._ask_password(inp)
+                    if pwd is None:
+                        self._set_status("Conversion cancelled: a password was not provided.",
+                                         interrupt=True)
+                        return
+                    passwords[str(inp)] = pwd
+
+        o = self._options_from_controls()
+        opts = self._engine_options(o)
+
+        self._cancel.clear()
+        self._last_pandoc_path = None
+        self._last_output_path = None
+        self._last_html_path = None
+        self._last_announced_pct = 0
+        self.log_text.Clear()
+        self.gauge.SetValue(0)
+        self._save_config()
+
+        n = len(jobs)
+        self._set_status(f"Converting {n} files..." if n > 1 else f"Converting {jobs[0][0].name}...",
+                         interrupt=True)
+        self._worker = threading.Thread(
+            target=self._run_pipeline,
+            args=(jobs, opts, passwords, o["math_mode"], o["html_copy"]),
+            daemon=True,
+        )
+        self._worker.start()
+        self._update_buttons()
+
+    # ----------------------------------------------------- worker (background)
+    def _call_on_gui(self, func, *args):
+        """Run func on the GUI thread and wait for its result."""
+        done = threading.Event()
+        box: Dict[str, object] = {}
+
+        def run():
+            try:
+                box["value"] = func(*args)
+            finally:
+                done.set()
+
+        wx.CallAfter(run)
+        done.wait()
+        return box.get("value")
+
+    def _ask_mathjax(self, name: str, n_math: int, remaining: int) -> Tuple[bool, bool]:
+        """Return (enable, apply_to_rest). Runs on the GUI thread."""
+        expr = "expression" if n_math == 1 else "expressions"
+        dlg = wx.RichMessageDialog(
+            self,
+            f"{name} contains {n_math} math {expr}.\n\n"
+            "Enable MathJax so the math is accessible? Screen readers will speak each "
+            "expression, it can be read in Braille, and you can explore it with the arrow "
+            "keys. A MathJax loader is added to the Markdown file and an accessible HTML "
+            "copy is saved next to it.",
+            "Math Found",
+            wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION,
+        )
+        dlg.SetYesNoLabels("&Enable MathJax", "&Not Now")
+        if remaining > 0:
+            dlg.ShowCheckBox("&Use this answer for the other files in this batch")
+        answer = dlg.ShowModal() == wx.ID_YES
+        apply_rest = remaining > 0 and dlg.IsCheckBoxChecked()
+        dlg.Destroy()
+        return answer, apply_rest
+
+    def _postprocess_math(self, outp: Path, opts: Options, math_mode: str, html_copy: bool,
+                          batch_answer: Dict[str, Optional[bool]], remaining: int) -> None:
+        try:
+            md = outp.read_text(encoding="utf-8")
+        except Exception:
+            return
+        n_math = count_math(md)
+        enable = False
+        if n_math:
+            self._log(f"Math found: {n_math} expression{'s' if n_math != 1 else ''}.")
+            if math_mode == "always":
+                enable = True
+            elif math_mode == "ask":
+                if batch_answer.get("value") is not None:
+                    enable = bool(batch_answer["value"])
+                else:
+                    wx.CallAfter(self._set_status,
+                                 f"Math found in {outp.name}. Choose whether to enable MathJax.",
+                                 False)
+                    enable, apply_rest = self._call_on_gui(self._ask_mathjax, outp.name, n_math,
+                                                           remaining)
+                    if apply_rest:
+                        batch_answer["value"] = enable
+        if not enable and not html_copy:
+            return
+        try:
+            html_path = apply_mathjax(outp, ocr_lang=opts.ocr_lang, enable_mathjax=enable,
+                                      write_html=True)
+        except Exception as e:
+            self._log(f"Could not write accessible output for {outp.name}: {e}")
+            return
+        if enable:
+            self._log("MathJax enabled: math will be spoken by screen readers and can be "
+                      "explored with the arrow keys.")
+        if html_path:
+            self._last_html_path = str(html_path)
+            self._log(f"Accessible HTML: {os_display_path(html_path)}")
+
+    def _run_pipeline(self, jobs: List[Tuple[Path, Path]], opts: Options,
+                      passwords: Dict[str, Optional[str]], math_mode: str,
+                      html_copy: bool) -> None:
+        total_jobs = len(jobs)
+        successes = 0
+        failures: List[str] = []
+        batch_answer: Dict[str, Optional[bool]] = {"value": None}
+        final_status = ""
+        error_dialog: Optional[Tuple[str, str]] = None
+
+        try:
+            for job_idx, (inp, outp) in enumerate(jobs):
+                if self._cancel.is_set():
+                    raise UserCancelled()
+
+                if total_jobs > 1:
+                    self._log("")
+                    self._log(f"[{job_idx + 1} of {total_jobs}] {inp.name}")
+                    wx.CallAfter(self._set_status,
+                                 f"File {job_idx + 1} of {total_jobs}: {inp.name}", False)
+                self._log(f"Input:  {os_display_path(inp)}")
+                self._log(f"Output: {os_display_path(outp)}")
+                self._log(f"OCR mode: {opts.ocr_mode}")
+
+                def progress(done: int, total: int, idx=job_idx) -> None:
+                    if self._cancel.is_set():
+                        raise UserCancelled()
+                    frac = (done / total) if total > 0 else 0.0
+                    pct = int((idx + max(0.0, min(1.0, frac))) * 100 / total_jobs)
+                    wx.CallAfter(self._on_progress, pct)
+
+                def log_cb(msg: str) -> None:
+                    if self._cancel.is_set():
+                        raise UserCancelled()
+                    self._log(msg)
+
+                try:
+                    pdf_to_markdown(str(inp), str(outp), opts, progress_cb=progress,
+                                    log_cb=log_cb, pdf_password=passwords.get(str(inp)))
+                    successes += 1
+                    self._last_output_path = str(outp)
+                    self._postprocess_math(outp, opts, math_mode, html_copy, batch_answer,
+                                           remaining=total_jobs - job_idx - 1)
+                    if self.pandoc_auto:
+                        self._pandoc_export(outp, opts.ocr_lang)
+                except UserCancelled:
+                    raise
+                except Exception as e:
+                    failures.append(inp.name)
+                    self._log(f"Error converting {inp.name}: {e}")
+                    if total_jobs == 1:
+                        error_dialog = ("Conversion Failed",
+                                        f"{inp.name} could not be converted:\n\n{e}")
+
+            if total_jobs == 1:
+                if failures:
+                    final_status = "Conversion failed. See the conversion log for details."
+                else:
+                    final_status = f"Conversion complete. Saved {jobs[0][1].name}."
+                    if self._last_html_path:
+                        final_status += " An accessible HTML copy was saved too."
+                    if self._last_pandoc_path:
+                        final_status += f" Pandoc export saved {Path(self._last_pandoc_path).name}."
+            else:
+                final_status = f"Batch complete: {successes} of {total_jobs} converted."
+                if failures:
+                    final_status += f" {len(failures)} failed: {', '.join(failures)}."
+                    error_dialog = ("Some Files Failed",
+                                    f"{len(failures)} of {total_jobs} files could not be converted:\n\n"
+                                    + "\n".join(failures)
+                                    + "\n\nSee the conversion log for details.")
+            self._log("")
+            self._log(final_status)
+        except UserCancelled:
+            self._log("Cancelled by user.")
+            final_status = f"Conversion stopped. {successes} of {total_jobs} files converted."
+        finally:
+            passwords.clear()
+            wx.CallAfter(self._on_finished, final_status, error_dialog,
+                         100 if not self._cancel.is_set() else None)
+
+    # ------------------------------------------------------- GUI-thread hooks
+    def _on_progress(self, pct: int) -> None:
+        pct = max(0, min(100, pct))
+        self.gauge.SetValue(pct)
+        self.SetStatusText(f"{self._status_text}  {pct}%")
+        # Announce every 25% so screen reader users know it is working,
+        # without flooding them with speech.
+        step = (pct // 25) * 25
+        if 0 < step < 100 and step > self._last_announced_pct:
+            self._last_announced_pct = step
+            self.announcer.speak(f"{step} percent")
+
+    def _on_finished(self, status: str, error_dialog, final_pct: Optional[int]) -> None:
+        if not self:
+            return
+        self._worker = None
+        if final_pct is not None:
+            self.gauge.SetValue(final_pct)
+        self._cancel.clear()
+        self._update_buttons()
+        if status:
+            self._set_status(status, interrupt=True)
+        if error_dialog:
+            wx.MessageBox(error_dialog[1], error_dialog[0], wx.OK | wx.ICON_ERROR, self)
+
+    def _on_cancel(self) -> None:
+        if not self._busy():
+            return
+        self._cancel.set()
+        self._set_status("Stopping after the current step...", interrupt=True)
+        self._log("Stop requested; finishing the current step...")
+
+    # ---------------------------------------------------------------- opening
+    def _open_path(self, path: Path) -> None:
+        try:
+            if platform.system() == "Windows":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:
+            self._error("Could Not Open", f"Could not open:\n{path}\n\n{e}")
+
+    # ----------------------------------------------------------------- pandoc
+    @staticmethod
+    def _engine_options(o: dict) -> Options:
+        return Options(
+            ocr_mode=o["ocr_mode"],
+            ocr_lang=o["ocr_lang"],
+            preview_only=o["preview"],
+            caps_to_headings=o["caps_to_headings"],
+            defragment_short=o["defrag"],
+            heading_size_ratio=o["heading_ratio"],
+            orphan_max_len=o["orphan_len"],
+            remove_headers_footers=o["rm_edges"],
+            insert_page_breaks=o["page_breaks"],
+            export_images=o["export_images"],
+        )
+
+    def _open_pandoc(self) -> None:
+        """Open the pandoc converter, pre-filled with the last converted file."""
+        if self._busy():
+            self._set_status("Wait for the current conversion to finish.", interrupt=True)
+            return
+        o = self._options_from_controls()
+        engine_opts = self._engine_options(o)
+
+        def pdf_converter(src: Path, dest_md: Path) -> None:
+            # Runs on the pandoc dialog's worker thread.
+            pdf_to_markdown(str(src), str(dest_md), engine_opts)
+
+        initial: List[str] = []
+        if self._last_output_path and Path(self._last_output_path).is_file():
+            initial.append(self._last_output_path)
+        else:
+            initial.extend(self._input_paths)
+        dlg = PandocDialog(self, self.pandoc_opts, self.pandoc_auto, initial, o["ocr_lang"],
+                           pdf_converter, announcer=self.announcer, out_dir=self.pandoc_out_dir)
+        dlg.ShowModal()
+        self.pandoc_opts = dlg.opts
+        self.pandoc_auto = dlg.auto_export
+        self.pandoc_out_dir = dlg.out_dir_value
+        dlg.Destroy()
+        self._save_config()
+        if self.pandoc_auto:
+            self._set_status(
+                f"PDF conversions will also be exported to "
+                f"{ps.format_label(self.pandoc_opts.to_format)}.", announce=False)
+
+    def _pandoc_export(self, md_path: Path, ocr_lang: str) -> None:
+        """Worker thread: export a converted Markdown file with pandoc."""
+        pandoc = ps.find_pandoc()
+        if not pandoc:
+            self._log("Pandoc export skipped: pandoc is not installed. "
+                      "Use File > Convert with Pandoc to install it.")
+            return
+        o = self.pandoc_opts
+        dest_dir = Path(self.pandoc_out_dir) if self.pandoc_out_dir else md_path.parent
+        dest = dest_dir / (md_path.stem + ps.output_extension(o.to_format))
+        if dest == md_path:
+            dest = dest_dir / (md_path.stem + "_pandoc" + ps.output_extension(o.to_format))
+        try:
+            ps.convert(md_path, dest, o, ocr_lang=ocr_lang, log_cb=self._log, pandoc=pandoc)
+            self._last_pandoc_path = str(dest)
+            self._log(f"Pandoc export: {os_display_path(dest)}")
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Pandoc export failed for {md_path.name}: {e}")
+
+    # -------------------------------------------------------------- tesseract
+    def _open_tesseract(self, check_now: bool = False) -> None:
+        if self._busy():
+            self._set_status("Wait for the current conversion to finish.", interrupt=True)
+            return
+        dlg = TesseractDialog(self, announcer=self.announcer, check_now=check_now)
+        dlg.ShowModal()
+        dlg.Destroy()
+        tess = ts.configure()
+        self._log("Tesseract OCR: " + (f"{ts.installed_version(tess) or 'installed'} at {tess}."
+                                       if tess else "not installed."))
+
+    def _check_ocr_ready(self, inputs: List[Path]) -> bool:
+        """Return False to cancel the conversion."""
+        mode = OCR_CODES[max(0, self.ocr_choice.GetSelection())]
+        if mode == "off" or ts.configure():
+            return True
+        scanned: List[str] = []
+        if mode == "auto":
+            try:
+                from pdfmd.extract import _needs_ocr_probe
+            except Exception:
+                _needs_ocr_probe = None  # type: ignore
+            for inp in inputs:
+                try:
+                    if _needs_ocr_probe and _needs_ocr_probe(str(inp), None):
+                        scanned.append(inp.name)
+                except Exception:
+                    pass
+            if not scanned:
+                return True
+            what = (f"{scanned[0]} looks like a scanned PDF" if len(scanned) == 1
+                    else f"{len(scanned)} files look like scanned PDFs")
+            msg = (f"{what}: its pages are pictures of text, which screen readers can't read. "
+                   "Tesseract OCR is needed to turn it into an accessible document, and it is "
+                   "not installed.\n\nInstall Tesseract now? Choose No to convert without OCR "
+                   "(scanned pages will be empty).")
+        else:
+            msg = ("The OCR mode needs Tesseract OCR, which is not installed.\n\n"
+                   "Install Tesseract now? Choose No to cancel.")
+        answer = wx.MessageBox(msg, "Tesseract OCR Needed",
+                               wx.YES_NO | wx.CANCEL | wx.YES_DEFAULT | wx.ICON_QUESTION, self)
+        if answer == wx.YES:
+            self._open_tesseract(check_now=True)
+            if ts.configure():
+                return True
+            self._set_status("Tesseract is still not installed. Conversion not started.", interrupt=True)
+            return False
+        if answer == wx.NO and mode == "auto":
+            return True
+        self._set_status("Conversion not started.", interrupt=True)
+        return False
+
+    def _open_output_folder(self) -> None:
+        path = self._last_output_path or self.out_text.GetValue().strip()
+        if not path:
+            return
+        folder = Path(path)
+        if not folder.is_dir():
+            folder = folder.parent
+        if not folder.exists():
+            self._error("Folder Not Found", f"The output folder does not exist:\n{folder}")
+            return
+        self._open_path(folder)
+
+    def _open_last_file(self, kind: str) -> None:
+        path = self._last_html_path if kind == "html" else self._last_output_path
+        if not path or not Path(path).is_file():
+            wx.MessageBox("There is no converted file to open yet.", "Nothing to Open",
+                          wx.OK | wx.ICON_INFORMATION, self)
+            return
+        self._open_path(Path(path))
+
+    # ------------------------------------------------------------ view / help
+    def _on_toggle_announce(self, event) -> None:
+        self.announcer.enabled = self.mi_announce.IsChecked()
+        self.SetStatusText("Screen reader announcements " +
+                           ("on." if self.announcer.enabled else "off."))
+        self.announcer.speak("Announcements on.", interrupt=True)
+
+    def _on_theme(self, name: str) -> None:
+        if name == self.theme:
+            return
+        self.theme = name
+        self._save_config()
+        if wx.MessageBox("The new theme is used the next time the program starts. Restart now?",
+                         "Restart Document Conversion Suite?", wx.YES_NO | wx.YES_DEFAULT | wx.ICON_QUESTION,
+                         self) == wx.YES and not self._busy():
+            self._restart()
+
+    def _restart(self) -> None:
+        self._save_config()
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable] + sys.argv[1:]
+        else:
+            cmd = [sys.executable, "-m", "pdfmd.app_gui"] + sys.argv[1:]
+        try:
+            subprocess.Popen(cmd, cwd=os.getcwd())
+        except Exception:
+            return
+        self.Destroy()
+
+    def _show_shortcuts(self) -> None:
+        with ShortcutsDialog(self) as dlg:
+            dlg.ShowModal()
+
+    def _show_about(self) -> None:
+        wx.MessageBox(
+            f"Document Conversion Suite {__version__}\n\n"
+            "Accessible document converter: PDF to Markdown with OCR, table detection and "
+            "accessible math (MathJax), plus conversion between every format pandoc "
+            "supports.\n\n"
+            "Built on the pdfmd PDF engine and pandoc (pandoc.org).\n\n"
+            "All conversion happens on your computer. Nothing is uploaded.\n\n"
+            "Licensed under the MIT License. Pandoc is licensed under the GPL.",
+            "About Document Conversion Suite", wx.OK | wx.ICON_INFORMATION, self)
+
+    # --------------------------------------------------------------- keyboard
+    def _on_char_hook(self, event: wx.KeyEvent) -> None:
+        key = event.GetKeyCode()
+        if key == wx.WXK_ESCAPE and self._busy():
+            self._on_cancel()
+            return
+        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and event.ControlDown() \
+                and not event.AltDown() and not event.ShiftDown():
+            self._on_convert()
+            return
+        event.Skip()
+
+    # ------------------------------------------------------------------ close
+    def _on_close(self, event: wx.CloseEvent) -> None:
+        if self._busy():
+            if event.CanVeto() and wx.MessageBox(
+                    "A conversion is still running. Stop it and exit?", "Exit Document Conversion Suite?",
+                    wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+                event.Veto()
+                return
+            self._cancel.set()
+        self._save_config()
+        self.Destroy()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def _read_config() -> dict:
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+class PdfMdApp(wx.App):
+    def __init__(self, files: Optional[List[str]] = None) -> None:
+        self._files = files or []
+        super().__init__(redirect=False)
+
+    def OnInit(self) -> bool:  # noqa: N802
+        self.SetAppName(APP_NAME)
+        # Send wx's internal diagnostics to stderr instead of pop-up windows
+        # that would interrupt screen reader users.
+        wx.Log.SetActiveTarget(wx.LogStderr())
+        config = _read_config()
+        theme = config.get("theme", "System")
+        if platform.system() == "Windows" and hasattr(self, "MSWEnableDarkMode"):
+            try:
+                if theme == "Dark":
+                    self.MSWEnableDarkMode(wx.App.DarkMode_Always)
+                elif theme == "System":
+                    self.MSWEnableDarkMode(wx.App.DarkMode_Auto)
+            except Exception:
+                pass
+        frame = PdfMdFrame(config, initial_files=self._files)
+        frame.Show()
+        self.SetTopWindow(frame)
+        return True
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    files = [a for a in args if a.lower().endswith(".pdf") and Path(a).is_file()]
+    app = PdfMdApp(files)
+    app.MainLoop()
+    return 0
 
 
 if __name__ == "__main__":
-    app = PdfMdApp()
-    app.mainloop()
+    raise SystemExit(main())
