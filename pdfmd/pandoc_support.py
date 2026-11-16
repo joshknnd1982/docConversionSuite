@@ -26,16 +26,19 @@ Accessibility defaults (used when "Math rendering" is Automatic):
 """
 from __future__ import annotations
 
+import copy
+import functools
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from . import pandoc_options as po
 from .mathjax import MATHJAX_URL, language_tag, wrap_unicode_math, _remove_mathjax_header
 
 Logger = Optional[Callable[[str], None]]
@@ -123,6 +126,14 @@ FORMAT_NAMES: Dict[str, str] = {
     "xwiki": "XWiki",
     "zimwiki": "ZimWiki",
     "ansi": "Terminal text with ANSI styling",
+    "asciidoc_legacy": "AsciiDoc (legacy)",
+    "bbcode": "BBCode forum markup",
+    "bbcode_fluxbb": "BBCode (FluxBB)",
+    "bbcode_hubzilla": "BBCode (Hubzilla)",
+    "bbcode_phpbb": "BBCode (phpBB)",
+    "bbcode_steam": "BBCode (Steam)",
+    "bbcode_xenforo": "BBCode (XenForo)",
+    "fodt": "Flat OpenDocument text (.fodt)",
     "mdoc": "mdoc man page",
 }
 
@@ -440,7 +451,14 @@ def plan_batch(items: Sequence[str | Path], to_format: str, out_dir: str | Path 
 
 @dataclass
 class PandocOptions:
-    """Pandoc settings. Anything not covered here goes in ``extra_args``."""
+    """Pandoc settings.
+
+    Options that existed before 1.9.0 have their own attribute, so old
+    settings and profiles keep loading. Every newer option from
+    ``pandoc_options.OPTIONS`` is stored in ``values`` (only when it differs
+    from pandoc's default). ``in_extensions`` / ``out_extensions`` hold the
+    format extensions turned on or off, per format: {"docx": {"styles": True}}.
+    """
 
     to_format: str = "html"
     from_format: str = ""             # "" = detect from the file extension
@@ -464,17 +482,104 @@ class PandocOptions:
     shift_heading_level: int = 0
     extract_media: bool = True
     pdf_engine: str = ""
+    values: Dict[str, Any] = field(default_factory=dict)
+    in_extensions: Dict[str, Dict[str, bool]] = field(default_factory=dict)
+    out_extensions: Dict[str, Dict[str, bool]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return dict(self.__dict__)
+        return copy.deepcopy(dict(self.__dict__))
 
     @classmethod
     def from_dict(cls, data: dict) -> "PandocOptions":
         obj = cls()
         for k, v in (data or {}).items():
             if hasattr(obj, k) and isinstance(v, type(getattr(obj, k))):
-                setattr(obj, k, v)
+                setattr(obj, k, copy.deepcopy(v))
+        # Keep only well-formed extension settings.
+        for name in ("in_extensions", "out_extensions"):
+            clean = {}
+            for fmt, changes in getattr(obj, name).items():
+                if isinstance(fmt, str) and isinstance(changes, dict):
+                    clean[fmt] = {str(e): bool(on) for e, on in changes.items()}
+            setattr(obj, name, clean)
         return obj
+
+    def citation_method(self) -> str:
+        """"", "citeproc", "natbib" or "biblatex"."""
+        method = str(self.values.get("citation_method", "") or "")
+        if not method and self.citeproc:
+            method = "citeproc"
+        if not method and self.bibliography.strip():
+            method = "citeproc"   # a bibliography means "format my citations"
+        return method
+
+
+_UNSET = object()
+
+
+@functools.lru_cache(maxsize=8)
+def _help_flags(pandoc: str) -> Optional[frozenset]:
+    try:
+        proc = _run([pandoc, "--help"])
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    flags = po.parse_help_flags(proc.stdout.decode("utf-8", "replace"))
+    return frozenset(flags) if flags else None
+
+
+def supported_flags(pandoc: Optional[str] = None) -> Optional[frozenset]:
+    """Long option names the pandoc program lists in ``--help`` (None if unknown)."""
+    pandoc = pandoc or find_pandoc()
+    if not pandoc:
+        return None
+    return _help_flags(str(pandoc))
+
+
+@functools.lru_cache(maxsize=64)
+def _extensions(pandoc: str, fmt: str) -> Tuple[Tuple[str, bool], ...]:
+    try:
+        proc = _run([pandoc, f"--list-extensions={fmt}"])
+    except Exception:
+        return ()
+    if proc.returncode != 0:
+        return ()
+    return tuple(po.parse_extensions(proc.stdout.decode("utf-8", "replace")))
+
+
+def list_extensions(fmt: str, pandoc: Optional[str] = None) -> List[Tuple[str, bool]]:
+    """Extensions of a format and whether pandoc turns each on by default."""
+    pandoc = pandoc or find_pandoc()
+    if not pandoc or not fmt:
+        return []
+    return list(_extensions(str(pandoc), po.base_format(fmt)))
+
+
+def _print(pandoc: Optional[str], args: List[str]) -> bytes:
+    pandoc = pandoc or find_pandoc()
+    if not pandoc:
+        raise RuntimeError("Pandoc is not installed.")
+    proc = _run([pandoc] + args)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip()
+                           or f"pandoc exited with code {proc.returncode}")
+    return proc.stdout
+
+
+def default_template(fmt: str, pandoc: Optional[str] = None) -> str:
+    """Pandoc's built-in template for an output format."""
+    return _print(pandoc, ["--print-default-template", po.base_format(fmt)]).decode("utf-8")
+
+
+def default_data_file(name: str, pandoc: Optional[str] = None) -> bytes:
+    """A pandoc data file, for example "reference.docx"."""
+    return _print(pandoc, ["--print-default-data-file", name])
+
+
+def highlight_style_theme(style: str, pandoc: Optional[str] = None) -> str:
+    """A highlighting style as an editable JSON theme."""
+    return _print(pandoc, ["--print-highlight-style", style]).decode("utf-8")
 
 
 def build_args(
@@ -484,40 +589,64 @@ def build_args(
     opts: PandocOptions,
     from_format: Optional[str],
     ocr_lang: Optional[str] = None,
+    include_reader: bool = True,
+    flags: Any = _UNSET,
+    resource_dirs: Optional[Sequence[Path]] = None,
+    page_title: Optional[str] = None,
 ) -> List[str]:
+    """The pandoc command line that converts ``input_path`` to ``output_path``.
+
+    ``include_reader`` False leaves out the options used when reading a source
+    document (for the second pass of a conversion that reads pandoc JSON).
+    ``flags`` is the set from ``supported_flags``; options the running pandoc
+    doesn't have are left out. The input file itself is not added.
+    """
+    if flags is _UNSET:
+        flags = supported_flags(pandoc)
+
+    def has(name: str) -> bool:
+        return flags is None or name in flags
+
     to = opts.to_format or "html"
-    base_to = re.split(r"[+-]", to, maxsplit=1)[0]
+    base_to = po.base_format(to)
+    if to == base_to:
+        to += po.extension_suffix(opts.out_extensions.get(base_to))
     args: List[str] = [pandoc]
     if from_format:
-        args += ["--from", from_format]
+        fr = from_format
+        base_from = po.base_format(from_format)
+        if include_reader and fr == base_from:
+            fr += po.extension_suffix(opts.in_extensions.get(base_from))
+        args += ["--from", fr]
     args += ["--to", to, "--output", str(output_path)]
 
     if opts.standalone and base_to not in BINARY_OUTPUTS:
         args.append("--standalone")
     if opts.toc:
         args += ["--toc", f"--toc-depth={max(1, min(6, int(opts.toc_depth)))}"]
-    if opts.number_sections:
-        args.append("--number-sections")
     if opts.embed_resources and base_to in HTML_LIKE:
-        args += ["--embed-resources", "--standalone"]
+        args.append("--embed-resources")
+        if "--standalone" not in args:
+            args.append("--standalone")
     if opts.shift_heading_level:
         args.append(f"--shift-heading-level-by={int(opts.shift_heading_level)}")
-    if opts.citeproc or opts.bibliography:
+
+    method = opts.citation_method()
+    if method == "citeproc":
         args.append("--citeproc")
-    if opts.bibliography:
-        for bib in opts.bibliography.split(";"):
-            if bib.strip():
-                args += ["--bibliography", bib.strip()]
-    if opts.csl:
-        args += ["--csl", opts.csl]
-    if opts.reference_doc:
-        args += ["--reference-doc", opts.reference_doc]
-    if opts.template:
-        args += ["--template", opts.template]
-    if opts.highlight_style:
-        args += ["--highlight-style", opts.highlight_style]
-    if opts.wrap in WRAP_MODES and opts.wrap != "auto":
-        args.append(f"--wrap={opts.wrap}")
+    elif method in ("natbib", "biblatex") and base_to in po.LATEX_LIKE:
+        args.append(f"--{method}")
+    for bib in po.split_list(opts.bibliography):
+        args += ["--bibliography", bib]
+
+    hs = (opts.highlight_style or "").strip()
+    if hs:
+        if has("syntax-highlighting"):
+            args.append(f"--syntax-highlighting={hs}")
+        elif hs == "none":
+            args.append("--no-highlight")
+        elif hs != "idiomatic":
+            args += ["--highlight-style", hs]
     if opts.pdf_engine and base_to == "pdf":
         args += ["--pdf-engine", opts.pdf_engine]
 
@@ -534,32 +663,76 @@ def build_args(
         args.append(f"--mathjax={MATHJAX_URL}")
     elif math in ("mathml", "katex", "webtex", "gladtex"):
         args.append(f"--{math}")
-    elif math == "plain":
-        pass
 
     # Metadata: language and a page title so standalone output is labeled.
     lang = opts.lang.strip() or language_tag(ocr_lang)
     args += ["--metadata", f"lang={lang}"]
     if opts.title.strip():
         args += ["--metadata", f"title={opts.title.strip()}"]
+    elif page_title:
+        args += ["--metadata", f"pagetitle={page_title}"]
     elif input_path is not None:
         args += ["--metadata", f"pagetitle={input_path.stem}"]
 
-    if opts.extract_media and base_to not in BINARY_OUTPUTS and input_path is not None \
-            and (from_format or "") in ("docx", "odt", "epub", "pptx", "ipynb"):
+    if include_reader and opts.extract_media and base_to not in BINARY_OUTPUTS \
+            and input_path is not None \
+            and po.base_format(from_format) in ("docx", "odt", "epub", "pptx", "ipynb"):
         args += ["--extract-media", str(output_path.parent / (output_path.stem + "_media"))]
 
-    if input_path is not None:
-        args += ["--resource-path", os.pathsep.join([str(input_path.parent), "."])]
+    dirs = po.split_list(str(opts.values.get("resource_path", "")))
+    if resource_dirs:
+        dirs += [str(d) for d in resource_dirs]
+    elif input_path is not None:
+        dirs.append(str(input_path.parent))
+    if dirs:
+        args += ["--resource-path", os.pathsep.join(dirs + ["."])]
 
-    for flt in opts.lua_filters.split(";"):
-        flt = flt.strip()
-        if flt:
-            args += ["--lua-filter" if flt.lower().endswith(".lua") else "--filter", flt]
+    for flt in po.split_list(opts.lua_filters):
+        args += ["--lua-filter" if flt.lower().endswith(".lua") else "--filter", flt]
+
+    generic = po.generic_args(opts, to, from_format, flags,
+                              reader=None if include_reader else False)
+    # A defaults file goes first, so the options after it take priority.
+    defaults = [a for a in generic if a.startswith("--defaults=")]
+    generic = [a for a in generic if not a.startswith("--defaults=")]
+    args[1:1] = defaults
+    args += generic
 
     if opts.extra_args.strip():
         args += split_args(opts.extra_args)
     return args
+
+
+def reader_args(opts: PandocOptions, from_format: Optional[str],
+                flags: Optional[frozenset] = None) -> List[str]:
+    """Options for reading a source document into pandoc JSON."""
+    args = po.generic_args(opts, opts.to_format or "html", from_format, flags, reader=True)
+    # Reader options in the extra arguments (for example --track-changes=all)
+    # must reach the reading pass too.
+    extra = split_args(opts.extra_args) if opts.extra_args.strip() else []
+    k = 0
+    while k < len(extra):
+        a = extra[k]
+        name = a.split("=", 1)[0]
+        if name in _WRITER_ONLY:
+            k += 1 if "=" in a else 2
+            continue
+        args.append(a)
+        k += 1
+    return args
+
+
+def command_preview(opts: PandocOptions, input_name: str = "document.docx",
+                    pandoc: Optional[str] = None) -> str:
+    """The pandoc command line for one example file, for showing to the user."""
+    pandoc = pandoc or find_pandoc() or "pandoc"
+    src = Path(input_name)
+    fmt = opts.from_format or detect_input_format(src) or None
+    dest = src.with_suffix(output_extension(opts.to_format or "html"))
+    args = build_args(pandoc, src, dest, opts, fmt, flags=supported_flags(pandoc))
+    args[0] = "pandoc"
+    args.append(str(src))
+    return " ".join(shlex.quote(a) for a in args)
 
 
 def split_args(text: str) -> List[str]:
@@ -583,6 +756,49 @@ CONTAINER_INPUTS = ("docx", "odt", "epub", "epub2", "epub3", "pptx", "ipynb", "r
 _WRITER_ONLY = {"-o", "--output", "-t", "--to", "-w", "--write", "-f", "--from", "-r", "--read"}
 
 
+def _need_pandoc(pandoc: Optional[str]) -> str:
+    pandoc = pandoc or find_pandoc()
+    if not pandoc:
+        raise RuntimeError(
+            "Pandoc is not installed. Install it from https://pandoc.org/installing.html "
+            "or with: winget install --id JohnMacFarlane.Pandoc -e")
+    return pandoc
+
+
+def _prepare_input(input_path: Path, from_format: Optional[str]
+                   ) -> Tuple[Optional[str], Optional[str]]:
+    """The input format, and Markdown text to send instead of the file (or None)."""
+    if (from_format or "").startswith(("markdown", "gfm", "commonmark")) or \
+            input_path.suffix.lower() in (".md", ".markdown"):
+        text = input_path.read_text(encoding="utf-8", errors="replace")
+        # pdfmd's MathJax loader is only for Markdown viewers; pandoc handles
+        # math itself. Unicode math in sentences ("E = mc²") is turned into
+        # TeX so pandoc writes real equations (native Word/ODT equations,
+        # MathML in EPUB, MathJax in HTML) that assistive technology reads.
+        prepared = wrap_unicode_math(_remove_mathjax_header(text))
+        if prepared != text:
+            return from_format or "markdown", prepared
+    return from_format, None
+
+
+def _log_command(args: List[str], log_cb: Logger) -> None:
+    if log_cb:
+        shown = [Path(a).name if i == 0 else a for i, a in enumerate(args)]
+        log_cb("[pandoc] " + " ".join(shlex.quote(a) for a in shown))
+
+
+def _run_checked(args: List[str], log_cb: Logger, input_text: Optional[str] = None,
+                 cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+    proc = _run(args, input_text=input_text, cwd=cwd)
+    err = proc.stderr.decode("utf-8", "replace").strip()
+    if err and log_cb:
+        for line in err.splitlines():
+            log_cb(f"[pandoc] {line}")
+    if proc.returncode != 0:
+        raise RuntimeError(err or f"pandoc exited with code {proc.returncode}")
+    return proc
+
+
 def convert(
     input_path: str | Path,
     output_path: str | Path,
@@ -598,35 +814,20 @@ def convert(
     pictures without alternative text are described by the local vision
     model (see docimages.py).
     """
-    pandoc = pandoc or find_pandoc()
-    if not pandoc:
-        raise RuntimeError(
-            "Pandoc is not installed. Install it from https://pandoc.org/installing.html "
-            "or with: winget install --id JohnMacFarlane.Pandoc -e")
+    pandoc = _need_pandoc(pandoc)
     input_path = Path(input_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     from_format = opts.from_format or detect_input_format(input_path) or None
-    stdin_text: Optional[str] = None
-    if (from_format or "").startswith(("markdown", "gfm", "commonmark")) or \
-            input_path.suffix.lower() in (".md", ".markdown"):
-        text = input_path.read_text(encoding="utf-8", errors="replace")
-        # pdfmd's MathJax loader is only for Markdown viewers; pandoc handles
-        # math itself. Unicode math in sentences ("E = mc²") is turned into
-        # TeX so pandoc writes real equations (native Word/ODT equations,
-        # MathML in EPUB, MathJax in HTML) that assistive technology reads.
-        prepared = wrap_unicode_math(_remove_mathjax_header(text))
-        if prepared != text:
-            stdin_text = prepared
-            from_format = from_format or "markdown"
+    from_format, stdin_text = _prepare_input(input_path, from_format)
 
     if vision is not None and getattr(vision, "enabled", False):
         from . import vision as _vision
 
         if _vision.available(vision):
-            return _convert_with_descriptions(pandoc, input_path, output_path, opts, from_format,
-                                              stdin_text, ocr_lang, log_cb, vision)
+            return join_convert([input_path], output_path, opts, ocr_lang, log_cb, pandoc,
+                                vision, _single=(from_format, stdin_text))
         if log_cb:
             log_cb("[vision] Picture descriptions skipped: "
                    + _vision.unavailable_reason(vision) + ".")
@@ -634,108 +835,152 @@ def convert(
     args = build_args(pandoc, input_path, output_path, opts, from_format, ocr_lang)
     if stdin_text is None:
         args.append(str(input_path))
-    if log_cb:
-        shown = [Path(a).name if i == 0 else a for i, a in enumerate(args)]
-        log_cb("[pandoc] " + " ".join(shlex.quote(a) for a in shown))
-    proc = _run(args, input_text=stdin_text, cwd=str(input_path.parent))
-    err = proc.stderr.decode("utf-8", "replace").strip()
-    if err and log_cb:
-        for line in err.splitlines():
-            log_cb(f"[pandoc] {line}")
-    if proc.returncode != 0:
-        raise RuntimeError(err or f"pandoc exited with code {proc.returncode}")
+    _log_command(args, log_cb)
+    _run_checked(args, log_cb, input_text=stdin_text, cwd=str(input_path.parent))
     if log_cb:
         log_cb(f"[pandoc] Saved → {output_path}")
     return output_path
 
 
-def _convert_with_descriptions(pandoc: str, input_path: Path, output_path: Path,
-                               opts: PandocOptions, from_format: Optional[str],
-                               stdin_text: Optional[str], ocr_lang: Optional[str],
-                               log_cb: Logger, vision) -> Path:
-    """Read the document as pandoc JSON, describe its pictures, then write it."""
+def _read_ast(pandoc: str, input_path: Path, opts: PandocOptions, from_format: Optional[str],
+              stdin_text: Optional[str], media: Optional[Path], flags) -> dict:
+    """Read one document into pandoc's JSON format."""
+    import json
+
+    read = [pandoc]
+    if from_format:
+        base_from = po.base_format(from_format)
+        fr = from_format
+        if fr == base_from:
+            fr += po.extension_suffix(opts.in_extensions.get(base_from))
+        read += ["--from", fr]
+    read += ["--to", "json"]
+    if media is not None:
+        read += ["--extract-media", str(media)]
+    read += ["--resource-path", os.pathsep.join([str(input_path.parent), "."])]
+    read += reader_args(opts, from_format, flags)
+    if stdin_text is None:
+        read.append(str(input_path))
+    proc = _run_checked(read, None, input_text=stdin_text, cwd=str(input_path.parent))
+    return json.loads(proc.stdout.decode("utf-8"))
+
+
+def _unique_header_ids(blocks: list, seen: Dict[str, int]) -> None:
+    """Give repeated heading ids a number (-2, -3) so links stay unambiguous."""
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        if b.get("t") == "Header":
+            attr = b["c"][1]
+            ident = attr[0]
+            if ident:
+                n = seen.get(ident, 0) + 1
+                seen[ident] = n
+                if n > 1:
+                    attr[0] = f"{ident}-{n}"
+        elif b.get("t") in ("Div", "BlockQuote", "Figure"):
+            inner = b.get("c")
+            if isinstance(inner, list) and inner and isinstance(inner[-1], list):
+                _unique_header_ids(inner[-1], seen)
+
+
+def join_convert(
+    inputs: Sequence[str | Path],
+    output_path: str | Path,
+    opts: PandocOptions,
+    ocr_lang: Optional[str] = None,
+    log_cb: Logger = None,
+    pandoc: Optional[str] = None,
+    vision=None,
+    _single: Optional[Tuple[Optional[str], Optional[str]]] = None,
+) -> Path:
+    """Convert several documents (of any formats) into one output file.
+
+    Each input is read into pandoc's JSON format, the documents are joined
+    in order (the document information of the first one is kept), pictures
+    are described when ``vision`` is on, and pandoc writes the result.
+    """
     import json
     import tempfile
 
     from . import docimages
 
+    pandoc = _need_pandoc(pandoc)
+    flags = supported_flags(pandoc)
+    inputs = [Path(p) for p in inputs]
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     to = opts.to_format or "html"
-    base_to = re.split(r"[+-]", to, maxsplit=1)[0]
+    base_to = po.base_format(to)
+    single = len(inputs) == 1
+
     with tempfile.TemporaryDirectory(prefix="pdfmd-pandoc-") as tmp:
         tmpdir = Path(tmp)
-        # Pictures inside Word, ODT, EPUB, PowerPoint and notebooks are
-        # extracted: next to the output for text outputs (which link to
-        # them), or to a temporary folder for binary outputs (which embed
-        # them).
-        read = [pandoc]
-        if from_format:
-            read += ["--from", from_format]
-        read += ["--to", "json"]
-        base_dirs = [input_path.parent]
-        base_from = re.split(r"[+-]", from_format or "", maxsplit=1)[0] or \
-            {".rtf": "rtf", ".fb2": "fb2"}.get(input_path.suffix.lower(), "")
-        if base_from in CONTAINER_INPUTS:
-            if opts.extract_media and base_to not in BINARY_OUTPUTS:
-                media = output_path.parent / (output_path.stem + "_media")
+        blocks: list = []
+        meta: Optional[dict] = None
+        api = None
+        base_dirs: List[Path] = []
+        seen_ids: Dict[str, int] = {}
+        for i, inp in enumerate(inputs, 1):
+            if _single is not None:
+                from_format, stdin_text = _single
             else:
-                media = tmpdir / "media"
-            read += ["--extract-media", str(media)]
-            base_dirs.append(media)
-        read += ["--resource-path", os.pathsep.join([str(input_path.parent), "."])]
-        # Reader options in the extra arguments (for example
-        # --track-changes=all) must reach this pass too.
-        extra = split_args(opts.extra_args) if opts.extra_args.strip() else []
-        k = 0
-        while k < len(extra):
-            a = extra[k]
-            name = a.split("=", 1)[0]
-            if name in _WRITER_ONLY:
-                k += 1 if "=" in a else 2
-                continue
-            read.append(a)
-            k += 1
-        if stdin_text is None:
-            read.append(str(input_path))
-        proc = _run(read, input_text=stdin_text, cwd=str(input_path.parent))
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip()
-                               or f"pandoc exited with code {proc.returncode}")
-        ast = json.loads(proc.stdout.decode("utf-8"))
+                from_format = opts.from_format or detect_input_format(inp) or None
+                from_format, stdin_text = _prepare_input(inp, from_format)
+            base_from = po.base_format(from_format) or \
+                {".rtf": "rtf", ".fb2": "fb2"}.get(inp.suffix.lower(), "")
+            media: Optional[Path] = None
+            tmp_name = "media" if single else f"media{i}"
+            if base_from in CONTAINER_INPUTS:
+                # Pictures inside Word, ODT, EPUB, PowerPoint and notebooks
+                # are extracted: next to the output for text outputs (which
+                # link to them), or to a temporary folder for binary outputs
+                # (which embed them).
+                if opts.extract_media and base_to not in BINARY_OUTPUTS:
+                    media = output_path.parent / (output_path.stem + "_media")
+                    if not single:
+                        media = media / str(i)
+                else:
+                    media = tmpdir / tmp_name
+            if not single and log_cb:
+                log_cb(f"[pandoc] Reading {i} of {len(inputs)}: {inp.name}")
+            ast = _read_ast(pandoc, inp, opts, from_format, stdin_text, media, flags)
+            if media is not None and media.parent == tmpdir and media.is_dir():
+                # Refer to temporary pictures by a short relative path so no
+                # temporary folder name ends up inside the document.
+                docimages.relocate_sources(ast.get("blocks", []), str(media), tmp_name + "/")
+            base_dirs.append(inp.parent)
+            if media is not None:
+                base_dirs.append(media)
+            if not single:
+                _unique_header_ids(ast.get("blocks", []), seen_ids)
+            blocks += ast.get("blocks", [])
+            if meta is None:
+                meta = ast.get("meta", {})
+                api = ast.get("pandoc-api-version")
+        doc = {"pandoc-api-version": api, "meta": meta or {}, "blocks": blocks}
 
-        vs = vision
-        if not getattr(vs, "lang", ""):
-            vs.lang = ocr_lang or "eng"
-        try:
-            n = docimages.describe_ast(ast, to, base_dirs, vs, log_cb=log_cb)
-            if log_cb and n:
-                log_cb(f"[vision] Described {n} picture{'s' if n != 1 else ''}.")
-        except Exception as e:  # noqa: BLE001  (never fail a conversion over pictures)
-            if log_cb:
-                log_cb(f"[vision] Picture descriptions skipped: {e}")
+        if vision is not None and getattr(vision, "enabled", False):
+            vs = vision
+            if not getattr(vs, "lang", ""):
+                vs.lang = ocr_lang or "eng"
+            try:
+                n = docimages.describe_ast(doc, to, base_dirs + [tmpdir], vs, log_cb=log_cb)
+                if log_cb and n:
+                    log_cb(f"[vision] Described {n} picture{'s' if n != 1 else ''}.")
+            except Exception as e:  # noqa: BLE001  (never fail a conversion over pictures)
+                if log_cb:
+                    log_cb(f"[vision] Picture descriptions skipped: {e}")
 
         doc_json = tmpdir / "document.json"
-        extra = []
-        if (tmpdir / "media").is_dir():
-            # Pictures extracted to the temporary folder are embedded in the
-            # output; refer to them by a short relative path so no temporary
-            # folder name ends up inside the document.
-            docimages.relocate_sources(ast.get("blocks", []), str(tmpdir / "media"), "media/")
-            extra = ["--resource-path",
-                     os.pathsep.join([str(tmpdir), str(input_path.parent), "."])]
-        doc_json.write_text(json.dumps(ast), encoding="utf-8")
-        args = build_args(pandoc, input_path, output_path, opts, "json", ocr_lang)
-        args += extra
+        doc_json.write_text(json.dumps(doc), encoding="utf-8")
+        dirs = [tmpdir] + list(dict.fromkeys(p.parent for p in inputs))
+        args = build_args(pandoc, inputs[0] if single else None, output_path, opts, "json",
+                          ocr_lang, include_reader=False, flags=flags, resource_dirs=dirs,
+                          page_title=None if single else output_path.stem)
         args.append(str(doc_json))
-        if log_cb:
-            shown = [Path(a).name if i == 0 else a for i, a in enumerate(args)]
-            log_cb("[pandoc] " + " ".join(shlex.quote(a) for a in shown))
-        proc = _run(args, cwd=str(input_path.parent))
-        err = proc.stderr.decode("utf-8", "replace").strip()
-        if err and log_cb:
-            for line in err.splitlines():
-                log_cb(f"[pandoc] {line}")
-        if proc.returncode != 0:
-            raise RuntimeError(err or f"pandoc exited with code {proc.returncode}")
+        _log_command(args, log_cb)
+        _run_checked(args, log_cb, cwd=str(inputs[0].parent))
     if log_cb:
         log_cb(f"[pandoc] Saved → {output_path}")
     return output_path
@@ -754,13 +999,21 @@ __all__ = [
     "WRAP_MODES",
     "find_pandoc",
     "pandoc_version",
+    "supported_flags",
     "list_input_formats",
     "list_output_formats",
     "list_highlight_styles",
+    "list_extensions",
+    "default_template",
+    "default_data_file",
+    "highlight_style_theme",
     "format_label",
     "output_extension",
     "detect_input_format",
     "build_args",
+    "reader_args",
+    "command_preview",
     "convert",
+    "join_convert",
     "install_command",
 ]
